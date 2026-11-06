@@ -28,6 +28,7 @@ import com.example.control.SuaDeviceController
 import com.example.data.SuaPreferences
 import com.example.data.SuaStateRepository
 import com.example.data.SuaStatus
+import com.example.util.HindiTransliterator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +47,20 @@ class SuaVoiceService : Service() {
         const val EXTRA_COMMAND_TEXT = "extra_command_text"
 
         fun startService(context: Context) {
+            val hasMic = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasMic) {
+                SuaStateRepository.setBackgroundServiceRunning(false)
+                SuaStateRepository.updateStatus(SuaStatus.ERROR)
+                SuaStateRepository.updateLiveTranscript("MIC PERMISSION DENIED // Cannot start background service")
+                SuaStateRepository.updateLastReply("PERMISSION ERROR // Microphone permission is required before starting SUA Background Service.")
+                SuaVoiceSpeaker.speak("माफ़ कीजिए सर, माइक परमिशन के बिना बैकग्राउंड वॉइस सर्विस चालू नहीं हो सकती।")
+                return
+            }
+
             val intent = Intent(context, SuaVoiceService::class.java).apply {
                 action = ACTION_START_LISTENING
             }
@@ -127,21 +142,43 @@ class SuaVoiceService : Service() {
             ACTION_EXECUTE_COMMAND -> {
                 val cmdText = intent.getStringExtra(EXTRA_COMMAND_TEXT).orEmpty().trim()
                 if (cmdText.isNotEmpty()) {
-                    processRecognizedCommand(cmdText)
+                    processRecognizedCommand(cmdText, fromMic = false)
                 }
             }
 
             else -> {
+                val hasMicPerm = ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+                // Android 14+ safety guard: never start FOREGROUND_SERVICE_TYPE_MICROPHONE without RECORD_AUDIO
+                if (!hasMicPerm) {
+                    shouldKeepListening = false
+                    SuaStateRepository.setBackgroundServiceRunning(false)
+                    SuaStateRepository.updateStatus(SuaStatus.ERROR)
+                    SuaStateRepository.updateLastReply("MIC PERMISSION REQUIRED // Grant Microphone permission in Settings first.")
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+
                 shouldKeepListening = true
                 acquireWakeLock()
                 SuaStateRepository.setBackgroundServiceRunning(true)
-                SuaStateRepository.updateLiveTranscript("ARC CORE ACTIVE // LISTENING FOR VOICE...")
-                SuaStateRepository.updateLastReply("SUA ONLINE // Background voice engine engaged. Speak your command in Hindi or English.")
-                startForegroundWithNotification("ARC CORE ONLINE // Listening for voice commands in background...")
+                SuaStateRepository.markWakeWordDetected() // Grant initial 20s active window on manual start
+                val wakeNote = if (prefs.isWakeWordRequiredInBackground()) {
+                    "Say 'SUA' before commands (e.g. 'SUA Rahul ko call karo')"
+                } else {
+                    "Continuous listening active"
+                }
+                SuaStateRepository.updateLiveTranscript("ARC CORE ACTIVE // $wakeNote")
+                SuaStateRepository.updateLastReply("SUA ONLINE // Background voice engine engaged. $wakeNote.")
+                startForegroundWithNotification("ARC CORE ONLINE // $wakeNote")
 
-                SuaVoiceSpeaker.speak("नमस्ते सर, सुआ बैकग्राउंड में ऑनलाइन है। बताइए मैं क्या काम करूँ?") {
+                SuaVoiceSpeaker.speak("नमस्ते सर, सुआ बैकग्राउंड में ऑनलाइन है। कोई भी काम बोलने से पहले सुआ कहें।") {
                     if (shouldKeepListening) {
-                        scheduleNextListen(250L)
+                        SuaStateRepository.markWakeWordDetected()
+                        scheduleNextListen(350L)
                     }
                 }
             }
@@ -161,7 +198,7 @@ class SuaVoiceService : Service() {
                 }
             }
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(4 * 60 * 60 * 1000L) // Up to 4 hours continuous background guard
+                wakeLock?.acquire(4 * 60 * 60 * 1000L)
             }
         } catch (_: Exception) {
         }
@@ -180,23 +217,18 @@ class SuaVoiceService : Service() {
         val notification = buildNotification(contentText)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val hasMicPerm = ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.RECORD_AUDIO
-                ) == PackageManager.PERMISSION_GRANTED
-                if (hasMicPerm) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (_: Exception) {
+            shouldKeepListening = false
+            SuaStateRepository.setBackgroundServiceRunning(false)
+            stopSelf()
         }
     }
 
@@ -278,7 +310,12 @@ class SuaVoiceService : Service() {
         override fun onReadyForSpeech(params: Bundle?) {
             isCurrentlyListening = true
             SuaStateRepository.updateStatus(SuaStatus.LISTENING)
-            SuaStateRepository.updateLiveTranscript("LISTENING // SPEAK COMMAND NOW...")
+            val wakeActive = !prefs.isWakeWordRequiredInBackground() ||
+                SuaStateRepository.isWithinWakeConversationWindow()
+            SuaStateRepository.updateLiveTranscript(
+                if (wakeActive) "LISTENING // SPEAK COMMAND NOW..."
+                else "STANDBY // SAY 'SUA' TO WAKE..."
+            )
         }
 
         override fun onBeginningOfSpeech() {
@@ -304,9 +341,10 @@ class SuaVoiceService : Service() {
                     error == SpeechRecognizer.ERROR_CLIENT
                 ) {
                     initSpeechRecognizer()
-                    scheduleNextListen(900L)
+                    scheduleNextListen(1400L)
                 } else {
-                    scheduleNextListen(450L)
+                    // Gentle cooldown to avoid rapid recognizer beep spam
+                    scheduleNextListen(1100L)
                 }
             } else {
                 SuaStateRepository.updateStatus(SuaStatus.IDLE)
@@ -319,9 +357,9 @@ class SuaVoiceService : Service() {
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val spokenText = matches?.firstOrNull()?.trim().orEmpty()
             if (spokenText.isNotEmpty()) {
-                processRecognizedCommand(spokenText)
+                processRecognizedCommand(spokenText, fromMic = true)
             } else if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                scheduleNextListen(350L)
+                scheduleNextListen(900L)
             }
         }
 
@@ -347,7 +385,7 @@ class SuaVoiceService : Service() {
                 Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED
             if (!hasMic) {
-                SuaStateRepository.updateLiveTranscript("MIC PERMISSION REQUIRED // OPEN SETTINGS -> GRANT ALL")
+                SuaStateRepository.updateLiveTranscript("MIC PERMISSION REQUIRED // OPEN CONFIG -> GRANT ALL")
                 return@post
             }
 
@@ -364,6 +402,14 @@ class SuaVoiceService : Service() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, prefs.getVoiceLocale())
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
+                    putExtra(
+                        RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                        1800L
+                    )
+                    putExtra(
+                        RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                        1500L
+                    )
                 }
                 speechRecognizer?.startListening(recognizerIntent)
                 SuaStateRepository.updateStatus(SuaStatus.LISTENING)
@@ -394,15 +440,53 @@ class SuaVoiceService : Service() {
         }, delayMs)
     }
 
-    private fun processRecognizedCommand(commandText: String) {
+    private fun processRecognizedCommand(rawSpokenText: String, fromMic: Boolean) {
         stopListeningInternal()
-        val hudTranscript = brain.sanitizeForHud(commandText)
+
+        val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText)
+        val wakeRequired = fromMic && prefs.isWakeWordRequiredInBackground()
+        val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow()
+
+        if (wakeRequired && !hasWakeWord && !inActiveWindow) {
+            // Ambient conversation or TV speech without "SUA" wake word -> ignore safely!
+            val ignoredHud = brain.sanitizeForHud(rawSpokenText)
+            SuaStateRepository.updateLiveTranscript("WAKE STANDBY // Ignored ambient: \"$ignoredHud\" (Say 'SUA' first)")
+            if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
+                scheduleNextListen(800L)
+            }
+            return
+        }
+
+        if (hasWakeWord) {
+            SuaStateRepository.markWakeWordDetected()
+        }
+
+        val effectiveCommand = if (hasWakeWord) strippedAfterWake else rawSpokenText.trim()
+
+        // If the user just said "SUA" / "Hey SUA" / "सुआ" with no command yet, acknowledge and listen!
+        if (effectiveCommand.isEmpty()) {
+            SuaStateRepository.markWakeWordDetected()
+            SuaStateRepository.updateLiveTranscript("SUA AWAKE // YES SIR, SPEAK YOUR COMMAND...")
+            SuaStateRepository.updateLastReply("WAKE WORD VERIFIED // Listening for your command (20s active window)...")
+            SuaVoiceSpeaker.speak("जी सर, बोलिए क्या काम करना है?") {
+                SuaStateRepository.markWakeWordDetected()
+                if (shouldKeepListening) {
+                    scheduleNextListen(300L)
+                }
+            }
+            return
+        }
+
+        val hudTranscript = brain.sanitizeForHud(effectiveCommand)
         SuaStateRepository.updateLiveTranscript(hudTranscript)
         SuaStateRepository.updateStatus(SuaStatus.PROCESSING)
 
         serviceScope.launch {
-            val parsed = brain.interpretCommand(commandText)
+            val parsed = brain.interpretCommand(effectiveCommand)
             val execResult = controller.executeCommand(parsed)
+
+            // Refresh active conversation window after executing a valid command
+            SuaStateRepository.markWakeWordDetected()
 
             SuaStateRepository.updateLastReply(execResult.displayReply)
             SuaStateRepository.addCommandLog(
@@ -416,7 +500,7 @@ class SuaVoiceService : Service() {
 
             SuaVoiceSpeaker.speak(execResult.finalSpokenReply) {
                 if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                    scheduleNextListen(350L)
+                    scheduleNextListen(600L)
                 } else {
                     SuaStateRepository.updateStatus(
                         if (shouldKeepListening) SuaStatus.LISTENING else SuaStatus.IDLE

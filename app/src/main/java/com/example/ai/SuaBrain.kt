@@ -3,6 +3,7 @@ package com.example.ai
 import com.example.data.DeviceActionType
 import com.example.data.ParsedCommand
 import com.example.data.SuaPreferences
+import com.example.util.HindiTransliterator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -21,6 +22,11 @@ class SuaBrain(private val prefs: SuaPreferences) {
         .writeTimeout(8, TimeUnit.SECONDS)
         .build()
 
+    private sealed class GeminiCallOutcome {
+        data class Success(val command: ParsedCommand) : GeminiCallOutcome()
+        data class Failure(val httpCode: Int, val errorDetail: String) : GeminiCallOutcome()
+    }
+
     suspend fun interpretCommand(rawInput: String): ParsedCommand = withContext(Dispatchers.IO) {
         val text = rawInput.trim()
         if (text.isEmpty()) {
@@ -31,22 +37,55 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 1. ZERO-LATENCY FAST PATH: Execute unambiguous hardware commands immediately (<5ms)
         val localMatch = parseHardwareIntentLocally(text)
+        val apiKey = prefs.getEffectiveApiKey()
+
+        // Fast-path unambiguous non-named hardware commands (Flashlight, Lock, Brightness, Volume, Media, Battery, Time, Alarm)
+        if (localMatch != null &&
+            localMatch.action != DeviceActionType.CALL &&
+            localMatch.action != DeviceActionType.SMS
+        ) {
+            return@withContext localMatch
+        }
+
+        // For CALL, SMS, or open-ended queries: if API key is present, let Gemini help transliterate names/messages accurately
+        var lastApiFailure: GeminiCallOutcome.Failure? = null
+        if (apiKey.isNotEmpty()) {
+            when (val outcome = callGeminiWithFallback(text, apiKey)) {
+                is GeminiCallOutcome.Success -> {
+                    val gemCmd = outcome.command
+                    if (gemCmd.action == DeviceActionType.AI_CHAT && localMatch != null) {
+                        return@withContext localMatch
+                    }
+                    return@withContext gemCmd
+                }
+                is GeminiCallOutcome.Failure -> {
+                    lastApiFailure = outcome
+                }
+            }
+        }
+
+        // If local parser matched CALL or SMS, execute it (HindiTransliterator handles Devanagari -> Roman contact matching)
         if (localMatch != null) {
             return@withContext localMatch
         }
 
-        // 2. GEMINI AI CORE PATH: For open-ended questions, complex requests, or conversation
-        val apiKey = prefs.getEffectiveApiKey()
-        if (apiKey.isNotEmpty()) {
-            val geminiResult = callGeminiApi(text, apiKey)
-            if (geminiResult != null) {
-                return@withContext geminiResult
-            }
+        // If Gemini API was configured by user but failed with an error, report the exact API error honestly!
+        if (lastApiFailure != null) {
+            val code = lastApiFailure.httpCode
+            val detail = lastApiFailure.errorDetail
+            return@withContext ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "GEMINI API ERROR (HTTP $code) // $detail. Check your API Key or Model in Settings.",
+                spokenReply = when (code) {
+                    400, 401, 403 -> "माफ़ कीजिए सर, आपकी गूगल जेमिनी एपीआई की मान्य नहीं है। कृपया सेटिंग्स में जाकर अपनी एपीआई की चेक करें।"
+                    429 -> "माफ़ कीजिए सर, आपकी जेमिनी एपीआई की का कोटा पूरा हो गया है।"
+                    else -> "माफ़ कीजिए सर, जेमिनी एआई सर्वर से जुड़ने में समस्या आई है: $detail"
+                }
+            )
         }
 
-        // 3. INSTANT CONVERSATIONAL FALLBACK (English HUD display + Hindi voice speech)
+        // Conversational fallback when no API key is configured
         val lower = text.lowercase()
         return@withContext when {
             lower.contains("tumhara naam") || lower.contains("your name") ||
@@ -68,42 +107,28 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 text.contains("नमस्ते") || text.contains("हेलो") || lower.contains("hey sua") -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "SUA ONLINE // Greetings Sir. All systems are at 100% capacity. Awaiting your command.",
+                    displayReply = "SUA ONLINE // Greetings Sir. All systems nominal. Awaiting your directive.",
                     spokenReply = "नमस्ते सर! मैं सुआ ऑनलाइन हूँ। बताइए आज आपके फोन में क्या काम करूँ?"
-                )
-            }
-            lower.contains("kaise ho") || lower.contains("how are you") || text.contains("कैसे हो") -> {
-                ParsedCommand(
-                    action = DeviceActionType.AI_CHAT,
-                    displayReply = "DIAGNOSTICS // All neural and hardware subsystems operating at peak efficiency.",
-                    spokenReply = "मैं एकदम बढ़िया हूँ सर, मेरे सारे सिस्टम पूरी तरह से काम कर रहे हैं।"
-                )
-            }
-            apiKey.isEmpty() -> {
-                ParsedCommand(
-                    action = DeviceActionType.AI_CHAT,
-                    displayReply = "COMMAND LOGGED // Hardware controls active. Add your Google Gemini API Key in Settings for full AI intelligence.",
-                    spokenReply = "जी सर, फोन कंट्रोल कमांड चालू हैं। किसी भी सवाल के जवाब के लिए सेटिंग्स में अपनी गूगल एपीआई की सेव करें।"
                 )
             }
             else -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "SUA CORE // Processed input: \"${sanitizeForHud(text)}\". Standing by.",
-                    spokenReply = "जी सर, मैंने आपका कमांड रिसीव कर लिया है। बताइए मैं और क्या मदद करूँ?"
+                    displayReply = "GEMINI KEY REQUIRED // Hardware controls work offline. To answer general questions (\"${sanitizeForHud(text)}\"), save your Google Gemini API Key in Settings.",
+                    spokenReply = "जी सर, फोन कंट्रोल कमांड ऑफलाइन काम कर रहे हैं। किसी भी सवाल के एआई जवाब के लिए सेटिंग्स में अपनी गूगल जेमिनी एपीआई की सेव करें।"
                 )
             }
         }
     }
 
-    /**
-     * Converts any Devanagari transcript into clean Roman/English label for the HUD if needed.
-     */
     fun sanitizeForHud(input: String): String {
         val trim = input.trim()
-        // Map common Hindi phrases to clean English/Hinglish for HUD display
-        return trim
+        val hasDevanagari = trim.any { it.code in 0x0900..0x097F }
+        if (!hasDevanagari) return trim
+
+        val mapped = trim
             .replace("खुशी को कॉल लगाओ", "Call Khushi")
+            .replace("राहुल को कॉल करो", "Call Rahul")
             .replace("फ्लैशलाइट बंद करो", "Turn Off Flashlight")
             .replace("फ्लैशलाइट चालू करो", "Turn On Flashlight")
             .replace("फोन को लॉक करो", "Lock Phone Screen")
@@ -113,6 +138,12 @@ class SuaBrain(private val prefs: SuaPreferences) {
             .replace("म्यूजिक चलाओ", "Play Music")
             .replace("म्यूजिक बंद करो", "Pause Music")
             .replace("बैटरी कितनी है", "Check Battery Status")
+
+        return if (mapped.any { it.code in 0x0900..0x097F }) {
+            HindiTransliterator.toRoman(mapped).replaceFirstChar { it.uppercase() }
+        } else {
+            mapped
+        }
     }
 
     fun parseHardwareIntentLocally(input: String): ParsedCommand? {
@@ -121,14 +152,18 @@ class SuaBrain(private val prefs: SuaPreferences) {
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
-        // 1. FLASHLIGHT OFF / ON
-        val hasFlashWord = lower.contains("flashlight") || lower.contains("flash light") ||
-            lower.contains("torch") || text.contains("फ्लैशलाइट") || text.contains("फ्लैश") ||
-            text.contains("टॉर्च") || text.contains("लाइट")
-        if (hasFlashWord) {
-            val isOff = lower.contains("off") || lower.contains("band") || lower.contains("bujha") ||
-                text.contains("बंद") || text.contains("ऑफ") || text.contains("बुझा")
-            return if (isOff) {
+        // 1. FLASHLIGHT OFF / ON (Strict: require explicit flashlight/torch OR light + explicit toggle verb)
+        val hasExplicitTorch = lower.contains("flashlight") || lower.contains("flash light") ||
+            lower.contains("torch") || text.contains("फ्लैशलाइट") || text.contains("टॉर्च")
+        val hasLightWord = (Regex("\\blight\\b").containsMatchIn(lower) || text.contains("लाइट")) &&
+            !text.contains("बिजली") && !text.contains("घर की लाइट") && !text.contains("लाइट नहीं")
+        val hasToggleOnVerb = Regex("\\b(on|chalu|chaalu|jala|jalao|start|enable)\\b").containsMatchIn(lower) ||
+            text.contains("चालू") || text.contains("जला") || text.contains("ऑन")
+        val hasToggleOffVerb = Regex("\\b(off|band|bujha|bujhao|stop|disable)\\b").containsMatchIn(lower) ||
+            text.contains("बंद") || text.contains("ऑफ") || text.contains("बुझा")
+
+        if (hasExplicitTorch || (hasLightWord && (hasToggleOnVerb || hasToggleOffVerb))) {
+            return if (hasToggleOffVerb) {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_OFF,
                     displayReply = "OPTICS STANDBY // Flashlight beam disengaged.",
@@ -137,18 +172,18 @@ class SuaBrain(private val prefs: SuaPreferences) {
             } else {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_ON,
-                    displayReply = "OPTICS ONLINE // Flashlight beam engaged at 100%.",
+                    displayReply = "OPTICS ONLINE // Flashlight beam engaged.",
                     spokenReply = "जी सर, फ्लैशलाइट चालू कर दी गई है।"
                 )
             }
         }
 
         // 2. LOCK PHONE
-        val hasLockWord = lower.contains("lock") || text.contains("लॉक")
-        if (hasLockWord && (lower.contains("phone") || lower.contains("screen") ||
-                lower.contains("mobile") || text.contains("फोन") || text.contains("स्क्रीन") ||
-                text.contains("मोबाइल") || lower.trim() == "lock" || text.contains("लॉक करो"))
-        ) {
+        val hasLockWord = Regex("\\block\\b").containsMatchIn(lower) || text.contains("लॉक")
+        val hasPhoneScreenTarget = lower.contains("phone") || lower.contains("screen") ||
+            lower.contains("mobile") || text.contains("फोन") || text.contains("स्क्रीन") ||
+            text.contains("मोबाइल") || lower.trim() == "lock" || text.contains("लॉक करो")
+        if (hasLockWord && hasPhoneScreenTarget) {
             return ParsedCommand(
                 action = DeviceActionType.LOCK_PHONE,
                 displayReply = "SECURITY PROTOCOL // Engaging device screen lock.",
@@ -241,8 +276,8 @@ class SuaBrain(private val prefs: SuaPreferences) {
         // 5. MUSIC / MEDIA
         val hasMusicWord = lower.contains("music") || lower.contains("song") || lower.contains("gana") ||
             lower.contains("gaana") || text.contains("म्यूजिक") || text.contains("गाना") ||
-            text.contains("सॉन्ग") || lower.contains("next track") || lower.contains("play music") ||
-            lower.contains("pause music")
+            text.contains("सॉन्ग") || lower.contains("next track") || lower.contains("previous track") ||
+            lower.contains("play music") || lower.contains("pause music")
         if (hasMusicWord) {
             val isStop = lower.contains("stop") || lower.contains("pause") || lower.contains("band") ||
                 lower.contains("roko") || text.contains("बंद") || text.contains("रोको") || text.contains("पॉज")
@@ -273,36 +308,43 @@ class SuaBrain(private val prefs: SuaPreferences) {
         }
 
         // 6. SMS / MESSAGE
-        val hasSmsWord = lower.contains("message") || lower.contains("sms") || lower.contains("msg") ||
+        val hasSmsWord = Regex("\\b(message|sms|msg|text)\\b").containsMatchIn(lower) ||
             text.contains("मैसेज") || text.contains("संदेश") || text.contains("एसएमएस")
         if (hasSmsWord) {
             val targetName = extractTargetNameForCallOrSms(text)
             val msgContent = extractMessageBody(text)
+            val hudName = HindiTransliterator.toRoman(targetName).replaceFirstChar { it.uppercase() }
+                .ifEmpty { targetName }
             return ParsedCommand(
                 action = DeviceActionType.SMS,
                 target = targetName,
                 message = msgContent,
-                displayReply = "COMMS SMS // Dispatching message to $targetName: \"$msgContent\"",
-                spokenReply = "जी सर, $targetName को मैसेज भेजा जा रहा है।"
+                displayReply = "COMMS SMS // Target: $hudName",
+                spokenReply = ""
             )
         }
 
         // 7. PHONE CALL
-        val hasCallWord = lower.contains("call") || lower.contains("phone laga") ||
-            lower.contains("dial") || text.contains("कॉल") || text.contains("फ़ोन लगा") ||
+        val hasCallWord = Regex("\\b(call|dial)\\b").containsMatchIn(lower) ||
+            lower.contains("phone laga") || lower.contains("fone laga") ||
+            text.contains("कॉल") || text.contains("फ़ोन लगा") ||
             text.contains("फोन लगा") || text.contains("डायल")
         if (hasCallWord) {
             val targetName = extractTargetNameForCallOrSms(text)
+            val hudName = HindiTransliterator.toRoman(targetName).replaceFirstChar { it.uppercase() }
+                .ifEmpty { targetName }
             return ParsedCommand(
                 action = DeviceActionType.CALL,
                 target = targetName,
-                displayReply = "COMMS VOICE // Initiating outgoing call to $targetName...",
-                spokenReply = "जी सर, $targetName को कॉल लगाया जा रहा है।"
+                displayReply = "COMMS VOICE // Target: $hudName",
+                spokenReply = ""
             )
         }
 
         // 8. BATTERY
-        if (lower.contains("battery") || text.contains("बैटरी") || text.contains("चार्ज")) {
+        if (Regex("\\bbattery\\b").containsMatchIn(lower) || text.contains("बैटरी") ||
+            (text.contains("चार्ज") && (text.contains("कितना") || text.contains("कितनी")))
+        ) {
             return ParsedCommand(
                 action = DeviceActionType.BATTERY_STATUS,
                 displayReply = "",
@@ -310,22 +352,32 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 9. ALARM
-        if (lower.contains("alarm") || text.contains("अलार्म")) {
-            val hour = if (extractedNum in 1..23) extractedNum else 7
+        // 9. ALARM (Supports AM/PM, शाम/रात/दोपहर/सुबह, and minutes like 5:30 or बजकर 30 मिनट)
+        if (Regex("\\balarm\\b").containsMatchIn(lower) || text.contains("अलार्म")) {
+            val (hour24, minute) = parseAlarmHourAndMinute(text)
+            val timeFormatted = String.format("%02d:%02d", hour24, minute)
             return ParsedCommand(
                 action = DeviceActionType.SET_ALARM,
-                numericValue = hour,
+                numericValue = hour24,
+                secondaryNumericValue = minute,
                 target = "SUA Tactical Alarm",
-                displayReply = "CHRONO ALARM // Setting system alarm for $hour:00.",
-                spokenReply = "जी सर, $hour बजे का अलार्म सेट किया जा रहा है।"
+                displayReply = "CHRONO ALARM // Setting system alarm for $timeFormatted.",
+                spokenReply = if (minute > 0) {
+                    "जी सर, $hour24 बजकर $minute मिनट का अलार्म सेट किया जा रहा है।"
+                } else {
+                    "जी सर, $hour24 बजे का अलार्म सेट किया जा रहा है।"
+                }
             )
         }
 
-        // 10. TIME / DATE
-        if (lower.contains("time") || lower.contains("samay") || lower.contains("date") ||
-            text.contains("समय") || text.contains("टाइम") || text.contains("तारीख") || text.contains("कितने बजे")
-        ) {
+        // 10. TIME / DATE (Strict query matching so random sentences with 'time' don't trigger)
+        val isTimeQuery = Regex("\\b(what time|current time|time kya|kya time|tell me the time|what is the date|aaj ki tarikh|samay kya|kitne baje)\\b")
+            .containsMatchIn(lower) ||
+            text.contains("समय क्या") || text.contains("कितने बजे") ||
+            text.contains("टाइम क्या") || text.contains("क्या टाइम") ||
+            text.contains("तारीख क्या") || text.contains("आज क्या तारीख") ||
+            lower == "time" || lower == "date"
+        if (isTimeQuery) {
             return ParsedCommand(
                 action = DeviceActionType.TIME_DATE,
                 displayReply = "",
@@ -345,47 +397,109 @@ class SuaBrain(private val prefs: SuaPreferences) {
         return null
     }
 
-    private fun extractTargetNameForCallOrSms(text: String): String {
+    /**
+     * Parses alarm hour (0..23) and minute (0..59) including Hindi/English AM/PM indicators
+     * ("शाम 5 बजे" -> 17:00, "रात 8:30 बजे" -> 20:30, "साढ़े 5 बजे शाम" -> 17:30).
+     */
+    fun parseAlarmHourAndMinute(text: String): Pair<Int, Int> {
         val lower = text.lowercase()
-        if (lower.contains("khushi") || text.contains("खुशी") || text.contains("ख़ुशी")) {
-            return "Khushi"
-        }
-        if (lower.contains("mom") || lower.contains("mummy") || text.contains("मम्मी") || text.contains("माँ")) {
-            return "Mom"
-        }
-        if (lower.contains("home") || lower.contains("ghar") || text.contains("घर")) {
-            return "Home"
+        var hour = 7
+        var minute = 0
+
+        // 1. Check HH:MM pattern first (e.g. "5:30", "17:45")
+        val colonMatch = Regex("(\\d{1,2}):(\\d{2})").find(lower)
+        if (colonMatch != null) {
+            hour = colonMatch.groupValues[1].toIntOrNull() ?: 7
+            minute = colonMatch.groupValues[2].toIntOrNull() ?: 0
+        } else {
+            // 2. Check "<H> बजकर <M> मिनट" or "<H> bajkar <M> minute"
+            val bajkarMatch = Regex("(\\d{1,2})\\s*(?:बजकर|bajkar|baje)\\s*(\\d{1,2})").find(text)
+            if (bajkarMatch != null) {
+                hour = bajkarMatch.groupValues[1].toIntOrNull() ?: 7
+                minute = bajkarMatch.groupValues[2].toIntOrNull() ?: 0
+            } else {
+                val firstNum = Regex("(\\d{1,2})").find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                if (firstNum != null) {
+                    hour = firstNum
+                }
+            }
         }
 
+        // Handle Hindi fractional hours: साढ़े (+30m), सवा (+15m), पौने (-15m from hour)
+        if (text.contains("साढ़े") || text.contains("साढे") || lower.contains("sadhe")) {
+            minute = 30
+        } else if (text.contains("सवा") || lower.contains("sawa")) {
+            minute = 15
+        } else if (text.contains("पौने") || lower.contains("paune")) {
+            hour = if (hour > 1) hour - 1 else 12
+            minute = 45
+        }
+
+        // Determine AM / PM
+        val isPm = Regex("\\bpm\\b|\\bp\\.m\\.\\b").containsMatchIn(lower) ||
+            text.contains("शाम") || text.contains("रात") || text.contains("दोपहर") ||
+            lower.contains("shaam") || lower.contains("sham") || lower.contains("raat") ||
+            lower.contains("dopahar") || lower.contains("evening") || lower.contains("night") ||
+            lower.contains("afternoon")
+        val isAm = Regex("\\bam\\b|\\ba\\.m\\.\\b").containsMatchIn(lower) ||
+            text.contains("सुबह") || lower.contains("subah") || lower.contains("morning")
+
+        if (isPm && hour in 1..11) {
+            hour += 12
+        } else if (isAm && hour == 12) {
+            hour = 0
+        }
+
+        return Pair(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
+    }
+
+    /**
+     * Extracts the spoken contact name in Hindi or English without ever defaulting to a fake name.
+     */
+    fun extractTargetNameForCallOrSms(text: String): String {
+        // 1. Check if a phone number was spoken directly
         val phoneMatch = Regex("\\+?\\d[\\d\\s-]{5,13}\\d").find(text)
         if (phoneMatch != null) {
             return phoneMatch.value.replace(Regex("[^0-9+]"), "")
         }
 
-        val koIndex = text.indexOf(" को ")
-        if (koIndex > 0) {
-            val beforeKo = text.substring(0, koIndex).trim()
-                .removePrefix("मेरा")
-                .removePrefix("मेरी")
-                .removePrefix("सुआ")
-                .removePrefix("sua")
-                .trim()
-            if (beforeKo.isNotEmpty()) return beforeKo
+        // 2. Hindi pattern: "<Name> को कॉल..." / "<Name> को फोन..." / "<Name> को मैसेज..."
+        val koMatch = Regex("([\\p{L}\\s]+?)\\s+को\\s+(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|call|phone|message|sms)").find(text)
+        if (koMatch != null) {
+            val candidate = cleanExtractedContactName(koMatch.groupValues[1])
+            if (candidate.isNotEmpty()) return candidate
         }
 
+        val koIdx = text.indexOf(" को ")
+        if (koIdx > 0) {
+            val candidate = cleanExtractedContactName(text.substring(0, koIdx))
+            if (candidate.isNotEmpty()) return candidate
+        }
+
+        // 3. Hinglish pattern: "<Name> ko call..." / "<Name> ko message..."
         val hinglishKo =
-            Regex("(?i)(?:mera\\s+|meri\\s+|sua\\s+)?([a-zA-Z0-9_]+)\\s+ko\\s+(?:call|phone|message|sms|msg)").find(text)
+            Regex("(?i)(?:mera\\s+|meri\\s+|sua\\s+|hey\\s+sua\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:call|phone|fone|message|sms|msg)").find(text)
         if (hinglishKo != null) {
-            return hinglishKo.groupValues[1].trim()
+            val candidate = cleanExtractedContactName(hinglishKo.groupValues[1])
+            if (candidate.isNotEmpty()) return candidate
         }
 
+        // 4. English pattern: "Call <Name>" / "Dial <Name>" / "Send SMS to <Name>" / "Message <Name>"
         val englishCall =
-            Regex("(?i)(?:call|dial|message|sms|text)\\s+(?:to\\s+)?([a-zA-Z0-9_]+)").find(text)
+            Regex("(?i)(?:call|dial|phone|message|sms|text)\\s+(?:to\\s+)?([a-zA-Z\\p{L}]+)").find(text)
         if (englishCall != null) {
-            return englishCall.groupValues[1].trim()
+            val candidate = cleanExtractedContactName(englishCall.groupValues[1])
+            if (candidate.isNotEmpty()) return candidate
         }
 
-        return "Khushi"
+        return ""
+    }
+
+    private fun cleanExtractedContactName(raw: String): String {
+        return raw.trim()
+            .replace(Regex("(?i)^(hey\\s+sua|ok\\s+sua|hello\\s+sua|suno\\s+sua|sua|हे\\s+सुआ|सुनो\\s+सुआ|सुआ|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"), "")
+            .replace(Regex("(?i)\\s+(को|ko|पे|पर|par)$"), "")
+            .trim()
     }
 
     private fun extractMessageBody(text: String): String {
@@ -397,28 +511,55 @@ class SuaBrain(private val prefs: SuaPreferences) {
         if (hinglishKi != null) {
             return hinglishKi.groupValues[1].trim()
         }
-        val englishThat = Regex("(?i)(?:message|sms|saying)\\s+(?:to\\s+\\S+\\s+)?(.+)$").find(text)
-        if (englishThat != null) {
-            return englishThat.groupValues[1].trim()
+        val englishSaying = Regex("(?i)(?:saying|that)\\s+(.+)$").find(text)
+        if (englishSaying != null) {
+            return englishSaying.groupValues[1].trim()
         }
-        return "Hello, I am on my way right now."
+        return ""
     }
 
-    private fun callGeminiApi(userCommand: String, apiKey: String): ParsedCommand? {
+    private fun callGeminiWithFallback(userCommand: String, apiKey: String): GeminiCallOutcome {
+        val preferred = prefs.getGeminiModel()
+        val candidateModels = (listOf(preferred) + SuaPreferences.SUPPORTED_GEMINI_MODELS).distinct()
+
+        var lastFailure = GeminiCallOutcome.Failure(0, "Network error")
+        for (modelId in candidateModels) {
+            val outcome = callGeminiSingleModel(userCommand, apiKey, modelId)
+            when (outcome) {
+                is GeminiCallOutcome.Success -> return outcome
+                is GeminiCallOutcome.Failure -> {
+                    lastFailure = outcome
+                    // Only retry next model on 404 (model not found / deprecated); stop immediately on 400/401/403/429
+                    if (outcome.httpCode != 404) {
+                        return outcome
+                    }
+                }
+            }
+        }
+        return lastFailure
+    }
+
+    private fun callGeminiSingleModel(
+        userCommand: String,
+        apiKey: String,
+        modelId: String
+    ): GeminiCallOutcome {
         return try {
             val systemInstruction = """
                 You are SUA (Smart Universal Assistant), an Iron Man style tactical AI assistant for Android.
                 IMPORTANT RULES:
                 1. Your name is strictly SUA, NEVER Jarvis.
                 2. Understand Hindi, Hinglish, and English voice commands.
-                3. Return ONLY a valid JSON object with this exact schema:
+                3. If the user asks to CALL or SMS someone (e.g. 'राहुल को कॉल करो'), always transliterate the contact's name into standard English script in the 'target' field (e.g. 'Rahul').
+                4. Return ONLY a valid JSON object with this exact schema:
                 {
                   "action": "CALL" | "SMS" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "TIME_DATE" | "AI_CHAT",
-                  "target": "contact name in English or phone number if CALL/SMS, or alarm label, otherwise empty string",
-                  "message": "SMS text content in English/Hinglish if action is SMS, otherwise empty string",
-                  "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm hour, or -1 if not applicable),
-                  "displayReply": "Concise, futuristic Iron Man HUD response strictly in English (NO Devanagari/Hindi script here). Example: 'SUA CORE // Initiating call to Khushi.'",
-                  "spokenReply": "Natural, polite spoken response in Hindi (Devanagari) as SUA so TextToSpeech speaks in fluent Hindi. Example: 'जी सर, खुशी को कॉल लगाया जा रहा है।'"
+                  "target": "contact name in English Roman script (e.g. 'Rahul', 'Khushi') or phone number if CALL/SMS, or alarm label, otherwise empty string",
+                  "message": "SMS text content if action is SMS, otherwise empty string",
+                  "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm 24h hour, or -1 if not applicable),
+                  "secondaryNumericValue": integer (0-59 for alarm minutes, default 0),
+                  "displayReply": "Concise, futuristic Iron Man HUD response strictly in English (NO Devanagari/Hindi script here).",
+                  "spokenReply": "Natural, polite spoken response in Hindi (Devanagari) as SUA so TextToSpeech speaks in fluent Hindi."
                 }
             """.trimIndent()
 
@@ -449,22 +590,36 @@ class SuaBrain(private val prefs: SuaPreferences) {
             }
 
             val url =
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+                "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent?key=$apiKey"
             val request = Request.Builder()
                 .url(url)
                 .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val bodyStr = response.body?.string() ?: return null
+                val bodyStr = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val errMsg = try {
+                        JSONObject(bodyStr).optJSONObject("error")?.optString("message")
+                            ?: "HTTP ${response.code}"
+                    } catch (_: Exception) {
+                        "HTTP ${response.code}"
+                    }
+                    return GeminiCallOutcome.Failure(response.code, errMsg)
+                }
+
                 val root = JSONObject(bodyStr)
                 val textOut = root.optJSONArray("candidates")
                     ?.optJSONObject(0)
                     ?.optJSONObject("content")
                     ?.optJSONArray("parts")
                     ?.optJSONObject(0)
-                    ?.optString("text", "") ?: return null
+                    ?.optString("text", "")
+                    .orEmpty()
+
+                if (textOut.isBlank()) {
+                    return GeminiCallOutcome.Failure(500, "Empty response from Gemini model $modelId")
+                }
 
                 val cleanJson = textOut
                     .removePrefix("```json")
@@ -481,21 +636,24 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 }
 
                 val displayEn = parsedObj.optString("displayReply", "")
-                    .ifBlank { "SUA CORE // Command executed." }
+                    .ifBlank { "SUA CORE // Command processed." }
                 val spokenHi = parsedObj.optString("spokenReply", "")
                     .ifBlank { "जी सर, आपका कमांड पूरा कर दिया गया है।" }
 
-                ParsedCommand(
-                    action = actionType,
-                    target = parsedObj.optString("target", ""),
-                    message = parsedObj.optString("message", ""),
-                    numericValue = parsedObj.optInt("numericValue", -1),
-                    displayReply = displayEn,
-                    spokenReply = spokenHi
+                GeminiCallOutcome.Success(
+                    ParsedCommand(
+                        action = actionType,
+                        target = parsedObj.optString("target", ""),
+                        message = parsedObj.optString("message", ""),
+                        numericValue = parsedObj.optInt("numericValue", -1),
+                        secondaryNumericValue = parsedObj.optInt("secondaryNumericValue", 0),
+                        displayReply = displayEn,
+                        spokenReply = spokenHi
+                    )
                 )
             }
-        } catch (_: Exception) {
-            null
+        } catch (e: Exception) {
+            GeminiCallOutcome.Failure(-1, e.localizedMessage ?: "Network connection failed")
         }
     }
 }

@@ -12,6 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.SuaStateRepository
 import com.example.service.SuaVoiceSpeaker
 import com.example.ui.SettingsScreen
 import com.example.ui.SuaDashboardScreen
@@ -60,6 +61,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        SuaStateRepository.setAppInForeground(true)
         viewModel.refreshPermissionsAndHardware()
+    }
+
+    override fun onPause() {
+        SuaStateRepository.setAppInForeground(false)
+        super.onPause()
     }
 }

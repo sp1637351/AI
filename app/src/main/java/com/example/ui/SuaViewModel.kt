@@ -42,8 +42,14 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     private val _hasEffectiveApiKey = MutableStateFlow(prefs.getEffectiveApiKey().isNotEmpty())
     val hasEffectiveApiKey: StateFlow<Boolean> = _hasEffectiveApiKey.asStateFlow()
 
+    private val _geminiModel = MutableStateFlow(prefs.getGeminiModel())
+    val geminiModel: StateFlow<String> = _geminiModel.asStateFlow()
+
     private val _continuousBgEnabled = MutableStateFlow(prefs.isContinuousBackgroundEnabled())
     val continuousBgEnabled: StateFlow<Boolean> = _continuousBgEnabled.asStateFlow()
+
+    private val _wakeWordRequired = MutableStateFlow(prefs.isWakeWordRequiredInBackground())
+    val wakeWordRequired: StateFlow<Boolean> = _wakeWordRequired.asStateFlow()
 
     private val _voiceLocale = MutableStateFlow(prefs.getVoiceLocale())
     val voiceLocale: StateFlow<String> = _voiceLocale.asStateFlow()
@@ -72,6 +78,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _permissionStatuses.value = controller.getPermissionStatusList()
         _savedApiKey.value = prefs.getSavedUserApiKey()
         _hasEffectiveApiKey.value = prefs.getEffectiveApiKey().isNotEmpty()
+        _geminiModel.value = prefs.getGeminiModel()
+        _wakeWordRequired.value = prefs.isWakeWordRequiredInBackground()
     }
 
     fun toggleBackgroundVoiceService() {
@@ -83,6 +91,14 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             SuaVoiceService.startService(appContext)
         }
+    }
+
+    fun onMicPermissionDenied() {
+        SuaStateRepository.setBackgroundServiceRunning(false)
+        SuaStateRepository.updateStatus(SuaStatus.ERROR)
+        SuaStateRepository.updateLiveTranscript("MIC PERMISSION DENIED // CANNOT START SERVICE")
+        SuaStateRepository.updateLastReply("PERMISSION DENIED // Microphone access was denied. Open CONFIG -> GRANT ALL SYSTEM PERMISSIONS to enable voice listening.")
+        SuaVoiceSpeaker.speak("माफ़ कीजिए सर, आपने माइक परमिशन मना कर दी है। इसके बिना सुआ आपकी आवाज़ नहीं सुन सकती।")
     }
 
     fun executeCommandText(commandText: String) {
@@ -113,7 +129,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testVoiceGreeting() {
         SuaStateRepository.updateLastReply("VOICE DIAGNOSTIC // Speaking Hindi audio test via SUA Voice Synthesis Core.")
-        SuaVoiceSpeaker.speak("नमस्ते सर! मैं सुआ हूँ, आपकी आयरन मैन स्टाइल स्मार्ट असिस्टेंट। मेरे सारे सिस्टम पूरी तरह तैयार हैं।")
+        SuaVoiceSpeaker.speak("नमस्ते सर! मैं सुआ हूँ, आपकी स्मार्ट वॉइस असिस्टेंट। कोई भी कमांड देने से पहले सुआ बोलें।")
     }
 
     fun saveApiKey(inputKey: String) {
@@ -126,16 +142,22 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         prefs.saveUserApiKey(cleaned)
         _savedApiKey.value = cleaned
         _hasEffectiveApiKey.value = prefs.getEffectiveApiKey().isNotEmpty()
-        _settingsBannerMessage.value = "VERIFIED // Google Gemini API Key saved and linked to SUA Neural Core."
-        SuaVoiceSpeaker.speak("जी सर, आपकी गूगल एपीआई की सफलतापूर्वक सेव हो गई है।")
+        _settingsBannerMessage.value = "ENCRYPTED & SAVED // Google Gemini API Key stored securely in Android Keystore."
+        SuaVoiceSpeaker.speak("जी सर, आपकी गूगल एपीआई की सुरक्षित रूप से सेव हो गई है।")
     }
 
     fun deleteApiKey() {
         prefs.deleteUserApiKey()
         _savedApiKey.value = ""
         _hasEffectiveApiKey.value = prefs.getEffectiveApiKey().isNotEmpty()
-        _settingsBannerMessage.value = "PURGED // Saved Google Gemini API Key removed from memory."
+        _settingsBannerMessage.value = "PURGED // Saved Google Gemini API Key removed from encrypted storage."
         SuaVoiceSpeaker.speak("जी सर, एपीआई की डिलीट कर दी गई है।")
+    }
+
+    fun setGeminiModel(modelId: String) {
+        prefs.setGeminiModel(modelId)
+        _geminiModel.value = prefs.getGeminiModel()
+        _settingsBannerMessage.value = "GEMINI MODEL UPDATED // Active model set to ${_geminiModel.value}"
     }
 
     fun clearSettingsBanner() {
@@ -146,6 +168,17 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         prefs.setContinuousBackgroundEnabled(enabled)
         _continuousBgEnabled.value = enabled
         val msg = if (enabled) "जी सर, कंटीन्यूअस बैकग्राउंड मोड चालू कर दिया गया है।" else "कंटीन्यूअस बैकग्राउंड मोड बंद कर दिया गया है।"
+        SuaVoiceSpeaker.speak(msg)
+    }
+
+    fun setWakeWordRequired(required: Boolean) {
+        prefs.setWakeWordRequiredInBackground(required)
+        _wakeWordRequired.value = required
+        val msg = if (required) {
+            "जी सर, अब बैकग्राउंड में कमांड देने से पहले सुआ बोलना ज़रूरी होगा।"
+        } else {
+            "जी सर, वेक-वर्ड बंद कर दिया गया है।"
+        }
         SuaVoiceSpeaker.speak(msg)
     }
 

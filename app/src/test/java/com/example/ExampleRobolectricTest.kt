@@ -33,7 +33,7 @@ class ExampleRobolectricTest {
         val callCmd = brain.parseHardwareIntentLocally("खुशी को कॉल लगाओ")
         assertNotNull(callCmd)
         assertEquals(DeviceActionType.CALL, callCmd?.action)
-        assertEquals("Khushi", callCmd?.target)
+        assertEquals("खुशी", callCmd?.target)
 
         val flashOffCmd = brain.parseHardwareIntentLocally("फ्लैशलाइट बंद करो")
         assertNotNull(flashOffCmd)

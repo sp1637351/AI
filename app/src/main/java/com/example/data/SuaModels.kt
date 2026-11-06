@@ -37,6 +37,7 @@ data class ParsedCommand(
     val target: String = "",
     val message: String = "",
     val numericValue: Int = -1,
+    val secondaryNumericValue: Int = 0,
     val displayReply: String = "",
     val spokenReply: String = ""
 )

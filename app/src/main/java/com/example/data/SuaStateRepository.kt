@@ -14,11 +14,14 @@ object SuaStateRepository {
     private val _isBackgroundServiceRunning = MutableStateFlow(false)
     val isBackgroundServiceRunning: StateFlow<Boolean> = _isBackgroundServiceRunning.asStateFlow()
 
+    private val _isAppInForeground = MutableStateFlow(true)
+    val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
+
     private val _liveTranscript = MutableStateFlow("AWAITING VOICE COMMAND...")
     val liveTranscript: StateFlow<String> = _liveTranscript.asStateFlow()
 
     private val _lastSuaReply = MutableStateFlow(
-        "SUA ONLINE // All tactical systems nominal. Tap the Arc Reactor core to engage background voice mode."
+        "SUA ONLINE // Say 'SUA' or 'Hey SUA' followed by your command in background mode."
     )
     val lastSuaReply: StateFlow<String> = _lastSuaReply.asStateFlow()
 
@@ -42,6 +45,22 @@ object SuaStateRepository {
 
     private val _audioRmsDb = MutableStateFlow(0f)
     val audioRmsDb: StateFlow<Float> = _audioRmsDb.asStateFlow()
+
+    @Volatile
+    var lastWakeSessionTimestampMs: Long = 0L
+
+    fun markWakeWordDetected() {
+        lastWakeSessionTimestampMs = System.currentTimeMillis()
+    }
+
+    fun isWithinWakeConversationWindow(windowMs: Long = 20_000L): Boolean {
+        val elapsed = System.currentTimeMillis() - lastWakeSessionTimestampMs
+        return lastWakeSessionTimestampMs > 0L && elapsed in 0..windowMs
+    }
+
+    fun setAppInForeground(inForeground: Boolean) {
+        _isAppInForeground.value = inForeground
+    }
 
     fun updateStatus(newStatus: SuaStatus) {
         _status.value = newStatus

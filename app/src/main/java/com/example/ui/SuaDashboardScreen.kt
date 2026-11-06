@@ -148,9 +148,15 @@ fun SuaDashboardScreen(
 
     val micPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
+    ) { permissions ->
         viewModel.refreshPermissionsAndHardware()
-        viewModel.toggleBackgroundVoiceService()
+        val micGranted = permissions[Manifest.permission.RECORD_AUDIO] == true ||
+            viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO)
+        if (micGranted) {
+            viewModel.toggleBackgroundVoiceService()
+        } else {
+            viewModel.onMicPermissionDenied()
+        }
     }
 
     val sampleCommands = remember {
@@ -1181,6 +1187,7 @@ private fun BrightnessAndSoundCard(
 
 @Composable
 private fun CommandLogItemCard(entry: CommandLogEntry) {
+    val statusColor = if (entry.actionSuccess) SuaEmerald else SuaAmber
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp),
@@ -1189,7 +1196,11 @@ private fun CommandLogItemCard(entry: CommandLogEntry) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, SuaBorder, CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp))
+                .border(
+                    1.dp,
+                    if (entry.actionSuccess) SuaBorder else SuaAmber.copy(alpha = 0.6f),
+                    CutCornerShape(topStart = 12.dp, bottomEnd = 12.dp)
+                )
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -1201,13 +1212,13 @@ private fun CommandLogItemCard(entry: CommandLogEntry) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(4.dp))
-                        .background(SuaCyan.copy(alpha = 0.16f))
+                        .background(statusColor.copy(alpha = 0.16f))
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        text = "${entry.actionType.codeTag} // ${entry.actionType.label}",
+                        text = "${if (entry.actionSuccess) "OK" else "ATTN"} // ${entry.actionType.codeTag} • ${entry.actionType.label}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = SuaCyan
+                        color = statusColor
                     )
                 }
                 Text(
@@ -1226,7 +1237,7 @@ private fun CommandLogItemCard(entry: CommandLogEntry) {
             Text(
                 text = "SUA > ${entry.suaResponse}",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SuaEmerald
+                color = statusColor
             )
         }
     }

@@ -2,32 +2,124 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import com.example.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class SuaPreferences(context: Context) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("sua_assistant_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        private const val KEY_USER_GEMINI_API_KEY = "user_gemini_api_key"
+        private const val KEY_USER_GEMINI_API_KEY_ENC = "user_gemini_api_key_enc_v2"
         private const val KEY_CONTINUOUS_BG = "continuous_bg_listening"
+        private const val KEY_REQUIRE_WAKE_WORD = "require_wake_word_bg"
+        private const val KEY_GEMINI_MODEL = "gemini_model_id"
         private const val KEY_VOICE_LOCALE = "voice_locale"
-        private const val KEY_QUICK_CONTACTS = "quick_contacts_v2_json"
+        private const val KEY_QUICK_CONTACTS = "quick_contacts_real_v3_json"
         private const val KEY_COMMAND_LOGS = "command_logs_v2_json"
+        private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
+
+        val SUPPORTED_GEMINI_MODELS = listOf(
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash"
+        )
     }
 
     fun getSavedUserApiKey(): String {
-        return prefs.getString(KEY_USER_GEMINI_API_KEY, "")?.trim() ?: ""
+        val raw = prefs.getString(KEY_USER_GEMINI_API_KEY_ENC, "") ?: ""
+        if (raw.isBlank()) return ""
+        return decryptString(raw).trim()
     }
 
     fun saveUserApiKey(apiKey: String) {
-        prefs.edit().putString(KEY_USER_GEMINI_API_KEY, apiKey.trim()).apply()
+        val clean = apiKey.trim()
+        if (clean.isEmpty()) {
+            deleteUserApiKey()
+            return
+        }
+        val encrypted = encryptString(clean)
+        prefs.edit().putString(KEY_USER_GEMINI_API_KEY_ENC, encrypted).apply()
     }
 
     fun deleteUserApiKey() {
-        prefs.edit().remove(KEY_USER_GEMINI_API_KEY).apply()
+        prefs.edit().remove(KEY_USER_GEMINI_API_KEY_ENC).apply()
+    }
+
+    private fun getOrCreateSecretKey(): SecretKey? {
+        return try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            val existing = keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry
+            if (existing != null) return existing.secretKey
+
+            val keyGen = KeyGenerator.getInstance(
+                KeyProperties.KEY_ALGORITHM_AES,
+                "AndroidKeyStore"
+            )
+            val spec = KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+            keyGen.init(spec)
+            keyGen.generateKey()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun encryptString(plainText: String): String {
+        return try {
+            val secretKey = getOrCreateSecretKey()
+            if (secretKey != null) {
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+                val iv = cipher.iv
+                val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+                val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+                val dataB64 = Base64.encodeToString(cipherBytes, Base64.NO_WRAP)
+                "GCM:$ivB64:$dataB64"
+            } else {
+                "B64:" + Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            }
+        } catch (_: Exception) {
+            "B64:" + Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        }
+    }
+
+    private fun decryptString(stored: String): String {
+        return try {
+            when {
+                stored.startsWith("GCM:") -> {
+                    val parts = stored.split(":", limit = 3)
+                    if (parts.size < 3) return ""
+                    val iv = Base64.decode(parts[1], Base64.NO_WRAP)
+                    val cipherBytes = Base64.decode(parts[2], Base64.NO_WRAP)
+                    val secretKey = getOrCreateSecretKey() ?: return ""
+                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                    cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+                    String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
+                }
+                stored.startsWith("B64:") -> {
+                    val b64 = stored.removePrefix("B64:")
+                    String(Base64.decode(b64, Base64.NO_WRAP), Charsets.UTF_8)
+                }
+                else -> stored
+            }
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     /**
@@ -62,6 +154,24 @@ class SuaPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_CONTINUOUS_BG, enabled).apply()
     }
 
+    fun isWakeWordRequiredInBackground(): Boolean {
+        return prefs.getBoolean(KEY_REQUIRE_WAKE_WORD, true)
+    }
+
+    fun setWakeWordRequiredInBackground(required: Boolean) {
+        prefs.edit().putBoolean(KEY_REQUIRE_WAKE_WORD, required).apply()
+    }
+
+    fun getGeminiModel(): String {
+        return prefs.getString(KEY_GEMINI_MODEL, "gemini-2.5-flash")?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: "gemini-2.5-flash"
+    }
+
+    fun setGeminiModel(modelId: String) {
+        val clean = modelId.trim().ifEmpty { "gemini-2.5-flash" }
+        prefs.edit().putString(KEY_GEMINI_MODEL, clean).apply()
+    }
+
     fun getVoiceLocale(): String {
         return prefs.getString(KEY_VOICE_LOCALE, "hi-IN") ?: "hi-IN"
     }
@@ -70,29 +180,30 @@ class SuaPreferences(context: Context) {
         prefs.edit().putString(KEY_VOICE_LOCALE, locale).apply()
     }
 
+    /**
+     * Returns ONLY user-saved speed dial contacts. Never returns fake fallback phone numbers.
+     */
     fun getQuickContacts(): List<QuickContact> {
         val raw = prefs.getString(KEY_QUICK_CONTACTS, null)
         if (raw.isNullOrBlank()) {
-            val defaults = listOf(
-                QuickContact(name = "Khushi", aliasTag = "PRIORITY // KHUSHI", phoneNumber = "9876543210"),
-                QuickContact(name = "Mom", aliasTag = "FAMILY // MOM", phoneNumber = "9876500001"),
-                QuickContact(name = "Home", aliasTag = "BASE // HOME", phoneNumber = "9876500002")
-            )
-            saveQuickContacts(defaults)
-            return defaults
+            return emptyList()
         }
         return try {
             val arr = JSONArray(raw)
             val list = mutableListOf<QuickContact>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
-                list.add(
-                    QuickContact(
-                        name = obj.optString("name", ""),
-                        aliasTag = obj.optString("aliasTag", "SPEED DIAL"),
-                        phoneNumber = obj.optString("phoneNumber", "")
+                val num = obj.optString("phoneNumber", "").trim()
+                val name = obj.optString("name", "").trim()
+                if (name.isNotEmpty() && num.isNotEmpty()) {
+                    list.add(
+                        QuickContact(
+                            name = name,
+                            aliasTag = obj.optString("aliasTag", "SPEED DIAL"),
+                            phoneNumber = num
+                        )
                     )
-                )
+                }
             }
             list
         } catch (_: Exception) {
