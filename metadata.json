@@ -1,0 +1,6 @@
+{
+  "name": "SUA",
+  "description": "SUA (Smart Universal Assistant) - Hindi & English background AI voice assistant for hands-free calls, messages, flashlight, phone lock, brightness, volume, and media control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
