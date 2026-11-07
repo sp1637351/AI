@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.SuaBrain
 import com.example.control.SuaDeviceController
 import com.example.data.CommandLogEntry
+import com.example.data.MokoMemoryItem
 import com.example.data.PermissionStatusItem
 import com.example.data.QuickContact
 import com.example.data.SuaPreferences
@@ -34,6 +35,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     val isMusicPlaying: StateFlow<Boolean> = SuaStateRepository.isMusicPlaying
     val isScreenLockedOverlay: StateFlow<Boolean> = SuaStateRepository.isScreenLockedOverlay
     val commandLogs: StateFlow<List<CommandLogEntry>> = SuaStateRepository.commandLogs
+    val memoryItems: StateFlow<List<MokoMemoryItem>> = SuaStateRepository.memoryItems
     val audioRmsDb: StateFlow<Float> = SuaStateRepository.audioRmsDb
 
     private val _savedApiKey = MutableStateFlow(prefs.getSavedUserApiKey())
@@ -69,6 +71,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     init {
         SuaVoiceSpeaker.init(appContext)
         SuaStateRepository.setInitialLogs(prefs.loadCommandLogs())
+        SuaStateRepository.setInitialMemories(prefs.loadMemoryItems())
         refreshPermissionsAndHardware()
     }
 
@@ -84,21 +87,31 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleBackgroundVoiceService() {
         if (isBackgroundServiceRunning.value) {
-            SuaVoiceService.stopService(appContext)
-            SuaStateRepository.updateLiveTranscript("ARC CORE STANDBY // BACKGROUND SERVICE STOPPED")
-            SuaStateRepository.updateLastReply("SUA STANDBY // Background voice loop disengaged.")
-            SuaVoiceSpeaker.speak("जी सर, सुआ बैकग्राउंड मोड बंद कर दिया गया है।")
+            activateSleepMode()
         } else {
-            SuaVoiceService.startService(appContext)
+            activateOnlineMode()
         }
+    }
+
+    fun activateOnlineMode() {
+        prefs.setContinuousBackgroundEnabled(true)
+        _continuousBgEnabled.value = true
+        SuaVoiceService.startService(appContext)
+    }
+
+    fun activateSleepMode() {
+        SuaVoiceService.stopService(appContext)
+        SuaStateRepository.updateLiveTranscript("SLEEP MODE // Background listening is OFF. Tap ONLINE to wake Moko.")
+        SuaStateRepository.updateLastReply("MOKO IN SLEEP MODE // Background microphone is completely off. Tap ONLINE or Sleep button to go back Online.")
+        SuaVoiceSpeaker.speak("जी बॉस, मोको अब स्लीप मोड में है। बैकग्राउंड में अब माइक बंद रहेगा।")
     }
 
     fun onMicPermissionDenied() {
         SuaStateRepository.setBackgroundServiceRunning(false)
         SuaStateRepository.updateStatus(SuaStatus.ERROR)
-        SuaStateRepository.updateLiveTranscript("MIC PERMISSION DENIED // CANNOT START SERVICE")
-        SuaStateRepository.updateLastReply("PERMISSION DENIED // Microphone access was denied. Open CONFIG -> GRANT ALL SYSTEM PERMISSIONS to enable voice listening.")
-        SuaVoiceSpeaker.speak("माफ़ कीजिए सर, आपने माइक परमिशन मना कर दी है। इसके बिना सुआ आपकी आवाज़ नहीं सुन सकती।")
+        SuaStateRepository.updateLiveTranscript("MIC PERMISSION DENIED // Cannot start Online Mode")
+        SuaStateRepository.updateLastReply("PERMISSION DENIED // Microphone access was denied. Open Side Menu -> Settings -> ALLOW ALL PERMISSIONS to enable Moko voice.")
+        SuaVoiceSpeaker.speak("माफ़ कीजिए बॉस, आपने माइक परमिशन मना कर दी है। इसके बिना मोको आपकी आवाज़ नहीं सुन सकती।")
     }
 
     fun executeCommandText(commandText: String) {
@@ -122,14 +135,39 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
                     actionSuccess = result.success,
                     prefs = prefs
                 )
+                SuaStateRepository.updateStatus(SuaStatus.IDLE)
                 SuaVoiceSpeaker.speak(result.finalSpokenReply)
             }
         }
     }
 
+    fun deleteCommandLogItem(logId: Long) {
+        SuaStateRepository.deleteCommandLog(logId, prefs)
+    }
+
+    fun pinChatToMemory(entry: CommandLogEntry) {
+        SuaStateRepository.pinCommandLogToMemory(entry, prefs)
+        SuaVoiceSpeaker.speak("जी बॉस, मैंने यह बातचीत अपनी मेमोरी में सेव कर ली है।")
+    }
+
+    fun addManualMemoryFact(factText: String) {
+        val cleaned = factText.trim()
+        if (cleaned.isEmpty()) return
+        SuaStateRepository.addMemoryFact(cleaned, isAuto = false, prefs = prefs)
+        SuaVoiceSpeaker.speak("जी बॉस, यह बात मोको की मेमोरी में जुड़ गई है।")
+    }
+
+    fun deleteMemoryFact(memoryId: Long) {
+        SuaStateRepository.deleteMemoryItem(memoryId, prefs)
+    }
+
+    fun clearAllMemories() {
+        SuaStateRepository.clearMemories(prefs)
+    }
+
     fun testVoiceGreeting() {
-        SuaStateRepository.updateLastReply("VOICE DIAGNOSTIC // Speaking Hindi audio test via SUA Voice Synthesis Core.")
-        SuaVoiceSpeaker.speak("नमस्ते सर! मैं सुआ हूँ, आपकी स्मार्ट वॉइस असिस्टेंट। कोई भी कमांड देने से पहले सुआ बोलें।")
+        SuaStateRepository.updateLastReply("MOKO VOICE TEST // Speaking Hindi voice greeting.")
+        SuaVoiceSpeaker.speak("नमस्ते बॉस! मेरा नाम मोको है। जब भी कोई हाय मोको बोलेगा, मैं तुरंत आपका काम करूँगी।")
     }
 
     fun saveApiKey(inputKey: String) {
@@ -143,15 +181,15 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _savedApiKey.value = cleaned
         _hasEffectiveApiKey.value = prefs.getEffectiveApiKey().isNotEmpty()
         _settingsBannerMessage.value = "ENCRYPTED & SAVED // Google Gemini API Key stored securely in Android Keystore."
-        SuaVoiceSpeaker.speak("जी सर, आपकी गूगल एपीआई की सुरक्षित रूप से सेव हो गई है।")
+        SuaVoiceSpeaker.speak("जी बॉस, आपकी गूगल एपीआई की सुरक्षित रूप से सेव हो गई है।")
     }
 
     fun deleteApiKey() {
         prefs.deleteUserApiKey()
         _savedApiKey.value = ""
         _hasEffectiveApiKey.value = prefs.getEffectiveApiKey().isNotEmpty()
-        _settingsBannerMessage.value = "PURGED // Saved Google Gemini API Key removed from encrypted storage."
-        SuaVoiceSpeaker.speak("जी सर, एपीआई की डिलीट कर दी गई है।")
+        _settingsBannerMessage.value = "DELETED // Saved Google Gemini API Key removed from encrypted storage."
+        SuaVoiceSpeaker.speak("जी बॉस, एपीआई की डिलीट कर दी गई है।")
     }
 
     fun setGeminiModel(modelId: String) {
@@ -167,7 +205,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     fun setContinuousBackground(enabled: Boolean) {
         prefs.setContinuousBackgroundEnabled(enabled)
         _continuousBgEnabled.value = enabled
-        val msg = if (enabled) "जी सर, कंटीन्यूअस बैकग्राउंड मोड चालू कर दिया गया है।" else "कंटीन्यूअस बैकग्राउंड मोड बंद कर दिया गया है।"
+        val msg = if (enabled) "जी बॉस, कंटीन्यूअस बैकग्राउंड मोड चालू कर दिया गया है।" else "कंटीन्यूअस बैकग्राउंड मोड बंद कर दिया गया है।"
         SuaVoiceSpeaker.speak(msg)
     }
 
@@ -175,9 +213,9 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         prefs.setWakeWordRequiredInBackground(required)
         _wakeWordRequired.value = required
         val msg = if (required) {
-            "जी सर, अब बैकग्राउंड में कमांड देने से पहले सुआ बोलना ज़रूरी होगा।"
+            "जी बॉस, अब बैकग्राउंड में कमांड देने से पहले हाय मोको बोलना ज़रूरी होगा।"
         } else {
-            "जी सर, वेक-वर्ड बंद कर दिया गया है।"
+            "जी बॉस, वेक-वर्ड बंद कर दिया गया है।"
         }
         SuaVoiceSpeaker.speak(msg)
     }
@@ -187,7 +225,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _voiceLocale.value = localeTag
         SuaVoiceSpeaker.applyLocale(localeTag)
         _settingsBannerMessage.value = "VOICE ENGINE // Output voice profile updated to $localeTag"
-        SuaVoiceSpeaker.speak("जी सर, मेरी वॉइस प्रोफाइल अपडेट हो गई है।")
+        SuaVoiceSpeaker.speak("जी बॉस, मेरी वॉइस प्रोफाइल अपडेट हो गई है।")
     }
 
     fun addOrUpdateQuickContact(name: String, aliasTag: String, phone: String) {
@@ -198,7 +236,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         val existingIdx = current.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
         val newContact = QuickContact(
             name = cleanName,
-            aliasTag = aliasTag.trim().ifEmpty { "PRIORITY // ${cleanName.uppercase()}" },
+            aliasTag = aliasTag.trim().ifEmpty { "SPEED DIAL // ${cleanName.uppercase()}" },
             phoneNumber = cleanPhone
         )
         if (existingIdx >= 0) {
@@ -208,8 +246,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         }
         prefs.saveQuickContacts(current)
         _quickContacts.value = current
-        _settingsBannerMessage.value = "CONTACT REGISTERED // ${newContact.name} ($cleanPhone) added to speed dial."
-        SuaVoiceSpeaker.speak("जी सर, ${newContact.name} का नंबर सेव कर लिया गया है।")
+        _settingsBannerMessage.value = "CONTACT SAVED // ${newContact.name} ($cleanPhone) added to Moko Speed Dial."
+        SuaVoiceSpeaker.speak("जी बॉस, ${newContact.name} का नंबर सेव कर लिया गया है।")
     }
 
     fun removeQuickContact(name: String) {
@@ -249,8 +287,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unlockScreenOverlay() {
         SuaStateRepository.setScreenLockedOverlay(false)
-        SuaStateRepository.updateLastReply("SECURITY PROTOCOL // Biometric & manual override verified. HUD unlocked.")
-        SuaVoiceSpeaker.speak("जी सर, स्क्रीन अनलॉक कर दी गई है।")
+        SuaStateRepository.updateLastReply("MOKO SECURITY // Screen unlocked.")
+        SuaVoiceSpeaker.speak("जी बॉस, स्क्रीन अनलॉक कर दी गई है।")
     }
 
     fun clearCommandHistory() {

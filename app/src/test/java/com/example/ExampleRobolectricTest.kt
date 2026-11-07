@@ -20,7 +20,7 @@ class ExampleRobolectricTest {
     fun `verify SUA app name and core Hindi voice commands`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("SUA", appName)
+        assertEquals("Moko", appName)
 
         val prefs = SuaPreferences(context)
         prefs.saveUserApiKey("AIzaSyTestKey12345")

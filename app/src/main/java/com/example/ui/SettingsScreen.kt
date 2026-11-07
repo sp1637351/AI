@@ -204,12 +204,12 @@ fun SettingsScreen(
                 title = {
                     Column {
                         Text(
-                            text = "SUA // SYSTEM CONFIGURATION",
+                            text = "MOKO // SYSTEM SETTINGS",
                             style = MaterialTheme.typography.titleLarge,
                             color = SuaTextPrimary
                         )
                         Text(
-                            text = "MARK VII TACTICAL CONSOLE • PERMISSIONS & API CORE",
+                            text = "PERMISSIONS, GEMINI API KEY & 'HI MOKO' WAKE ENGINE",
                             style = MaterialTheme.typography.labelSmall,
                             color = SuaCyan
                         )
@@ -222,7 +222,7 @@ fun SettingsScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to SUA HUD",
+                            contentDescription = "Back to Moko Home",
                             tint = SuaCyan
                         )
                     }
@@ -659,7 +659,7 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = "03 // WAKE-WORD ('SUA') & VOICE ENGINE",
+                                        text = "03 // WAKE-WORD ('HI MOKO') & VOICE ENGINE",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = SuaTextPrimary
                                     )
@@ -671,7 +671,7 @@ fun SettingsScreen(
                                 }
                             }
 
-                            // Wake-Word Toggle ("SUA" / "सुआ")
+                            // Wake-Word Toggle ("Hi Moko" / "हाय मोको")
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -679,13 +679,13 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Require 'SUA' Wake-Word in Background",
+                                        text = "Require 'Hi Moko' Wake-Word in Background",
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.SemiBold,
                                         color = SuaTextPrimary
                                     )
                                     Text(
-                                        text = "Only executes background voice commands when you say 'SUA' or 'Hey SUA' (plus 20s follow-up window)",
+                                        text = "Only executes background voice commands when you say 'Hi Moko', 'Hey Moko' or 'Moko' (plus 22s follow-up window)",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = SuaTextSecondary
                                     )
@@ -708,12 +708,12 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Continuous Background Listening Loop",
+                                        text = "Continuous Online Listening (Even on Lock Screen)",
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = SuaTextPrimary
                                     )
                                     Text(
-                                        text = "Automatically resumes listening after SUA finishes speaking each response",
+                                        text = "Automatically keeps Moko listening in Online Mode after speaking each response",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = SuaTextSecondary
                                     )
@@ -743,11 +743,11 @@ fun SettingsScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = "Test SUA Hindi Voice"
+                                    contentDescription = "Test Moko Hindi Voice"
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "TEST SUA HINDI VOICE OUTPUT",
+                                    text = "TEST MOKO HINDI VOICE OUTPUT",
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }

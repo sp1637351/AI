@@ -1,15 +1,15 @@
 <resources>
-    <string name="app_name">SUA</string>
-    <string name="sua_subtitle">SMART UNIVERSAL ASSISTANT // MARK VII HUD</string>
-    <string name="device_admin_description">Allows SUA Tactical Core to lock your phone screen instantly on voice command.</string>
-    <string name="notif_channel_name">SUA Background Tactical Core</string>
-    <string name="notif_channel_desc">Keeps SUA listening and responding to your voice commands in the background.</string>
-    <string name="settings_title">SUA SYSTEM CONFIGURATION</string>
-    <string name="allow_all_permissions">GRANT ALL SYSTEM PERMISSIONS</string>
+    <string name="app_name">Moko</string>
+    <string name="sua_subtitle">MOKO // PERSONAL AI VOICE &amp; MEMORY CORE</string>
+    <string name="device_admin_description">Allows Moko AI Core to lock your phone screen instantly on voice command.</string>
+    <string name="notif_channel_name">Moko Background Voice Service</string>
+    <string name="notif_channel_desc">Keeps Moko online and listening for "Hi Moko" in the background and while the screen is locked.</string>
+    <string name="settings_title">MOKO SYSTEM SETTINGS</string>
+    <string name="allow_all_permissions">ALLOW ALL SYSTEM PERMISSIONS</string>
     <string name="api_key_section_title">Google Gemini API Key</string>
     <string name="api_key_placeholder">Paste your Gemini API Key (AIzaSy...)</string>
     <string name="save_api_key">SAVE KEY</string>
     <string name="delete_api_key">DELETE KEY</string>
-    <string name="background_mode_active">ARC CORE ONLINE // LISTENING</string>
-    <string name="background_mode_inactive">TAP ARC REACTOR TO ENGAGE</string>
+    <string name="background_mode_active">MOKO ONLINE // SAY HI MOKO</string>
+    <string name="background_mode_inactive">SLEEP MODE // BACKGROUND OFF</string>
 </resources>

@@ -196,13 +196,17 @@ object HindiTransliterator {
     }
 
     private val wakeWordPatterns = listOf(
-        "hey sua", "ok sua", "okay sua", "hello sua", "hi sua", "suno sua", "oye sua",
-        "हे सुआ", "ओके सुआ", "हेलो सुआ", "हाय सुआ", "सुनो सुआ", "अरे सुआ",
-        "सुआ", "सुवा", "सुइया", "sua", "suva"
+        "hey moko", "hi moko", "hello moko", "ok moko", "okay moko", "suno moko", "oye moko",
+        "hey moco", "hi moco", "hello moco", "hi munh ko", "hey munh ko",
+        "हे मोको", "हाय मोको", "हेलो मोको", "ओके मोको", "सुनो मोको", "अरे मोको",
+        "हाय मुको", "हे मुको", "हाय मुंह को",
+        "मोको", "मुको", "मोकोजी", "moko", "moco", "moku",
+        // Keep legacy fallback if user says hey sua
+        "hey sua", "सुआ", "sua"
     )
 
     /**
-     * Checks if the spoken text contains the SUA wake word ("सुआ" / "SUA") and returns
+     * Checks if the spoken text contains the MOKO wake word ("हाय मोको" / "Hi Moko" / "Moko") and returns
      * Pair(hasWakeWord, commandAfterWakeWord).
      */
     fun checkAndStripWakeWord(rawSpoken: String): Pair<Boolean, String> {
@@ -213,13 +217,13 @@ object HindiTransliterator {
         for (wake in wakeWordPatterns) {
             val idx = lower.indexOf(wake)
             if (idx >= 0) {
-                // Ensure whole-word or prefix match for short 'sua'
                 val beforeOk = idx == 0 || !lower[idx - 1].isLetterOrDigit()
                 val endIdx = idx + wake.length
                 val afterOk = endIdx >= lower.length || !lower[endIdx].isLetterOrDigit()
                 if (beforeOk && afterOk) {
                     val remainder = (trimmed.substring(0, idx) + " " + trimmed.substring(endIdx))
                         .replace(Regex("^[\\s,.:;!-]+"), "")
+                        .replace(Regex("^(जी|ji|please|प्लीज|जरा|ज़रा)\\s+", RegexOption.IGNORE_CASE), "")
                         .trim()
                     return Pair(true, remainder)
                 }

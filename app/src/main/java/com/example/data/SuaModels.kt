@@ -9,27 +9,28 @@ enum class SuaStatus {
 }
 
 enum class DeviceActionType(val label: String, val codeTag: String) {
-    CALL("VOICE CALL", "SYS.COMMS.CALL"),
-    SMS("DISPATCH SMS", "SYS.COMMS.MSG"),
-    FLASHLIGHT_ON("TORCH ENGAGED", "SYS.OPTICS.ON"),
-    FLASHLIGHT_OFF("TORCH DISENGAGED", "SYS.OPTICS.OFF"),
-    LOCK_PHONE("SECURITY LOCK", "SYS.SEC.LOCK"),
-    BRIGHTNESS_UP("LUMINANCE UP", "SYS.DISP.HIGH"),
-    BRIGHTNESS_DOWN("LUMINANCE DOWN", "SYS.DISP.LOW"),
-    BRIGHTNESS_SET("LUMINANCE SET", "SYS.DISP.SET"),
-    VOLUME_UP("AUDIO GAIN UP", "SYS.AUDIO.UP"),
-    VOLUME_DOWN("AUDIO GAIN DOWN", "SYS.AUDIO.DOWN"),
-    VOLUME_SET("AUDIO GAIN SET", "SYS.AUDIO.SET"),
-    VOLUME_MUTE("AUDIO MUTED", "SYS.AUDIO.MUTE"),
-    MEDIA_PLAY("MEDIA PLAYBACK", "SYS.MEDIA.PLAY"),
-    MEDIA_PAUSE("MEDIA PAUSED", "SYS.MEDIA.PAUSE"),
-    MEDIA_NEXT("NEXT TRACK", "SYS.MEDIA.NEXT"),
-    MEDIA_PREV("PREV TRACK", "SYS.MEDIA.PREV"),
-    BATTERY_STATUS("POWER DIAGNOSTICS", "SYS.PWR.SCAN"),
-    SET_ALARM("CHRONO ALARM", "SYS.TIME.ALARM"),
-    OPEN_SETTINGS("OS CONSOLE", "SYS.OS.CONFIG"),
-    TIME_DATE("CHRONO SYNC", "SYS.TIME.SYNC"),
-    AI_CHAT("NEURAL RESPONSE", "SUA.AI.CORE")
+    CALL("VOICE CALL", "MOKO.CALL"),
+    SMS("SEND SMS", "MOKO.SMS"),
+    FLASHLIGHT_ON("TORCH ON", "MOKO.TORCH.ON"),
+    FLASHLIGHT_OFF("TORCH OFF", "MOKO.TORCH.OFF"),
+    LOCK_PHONE("SCREEN LOCK", "MOKO.LOCK"),
+    BRIGHTNESS_UP("BRIGHTNESS UP", "MOKO.BRIGHT.UP"),
+    BRIGHTNESS_DOWN("BRIGHTNESS DOWN", "MOKO.BRIGHT.DOWN"),
+    BRIGHTNESS_SET("BRIGHTNESS SET", "MOKO.BRIGHT.SET"),
+    VOLUME_UP("VOLUME UP", "MOKO.VOL.UP"),
+    VOLUME_DOWN("VOLUME DOWN", "MOKO.VOL.DOWN"),
+    VOLUME_SET("VOLUME SET", "MOKO.VOL.SET"),
+    VOLUME_MUTE("AUDIO MUTED", "MOKO.VOL.MUTE"),
+    MEDIA_PLAY("PLAY MUSIC", "MOKO.MEDIA.PLAY"),
+    MEDIA_PAUSE("PAUSE MUSIC", "MOKO.MEDIA.PAUSE"),
+    MEDIA_NEXT("NEXT TRACK", "MOKO.MEDIA.NEXT"),
+    MEDIA_PREV("PREV TRACK", "MOKO.MEDIA.PREV"),
+    BATTERY_STATUS("BATTERY STATUS", "MOKO.BATTERY"),
+    SET_ALARM("SET ALARM", "MOKO.ALARM"),
+    OPEN_SETTINGS("SYSTEM SETTINGS", "MOKO.SETTINGS"),
+    TIME_DATE("TIME & DATE", "MOKO.TIME"),
+    MEMORY_SAVE("MEMORY SAVED", "MOKO.MEMORY"),
+    AI_CHAT("MOKO AI CHAT", "MOKO.CHAT")
 }
 
 data class ParsedCommand(
@@ -39,7 +40,8 @@ data class ParsedCommand(
     val numericValue: Int = -1,
     val secondaryNumericValue: Int = 0,
     val displayReply: String = "",
-    val spokenReply: String = ""
+    val spokenReply: String = "",
+    val memoryFact: String = ""
 )
 
 data class CommandLogEntry(
@@ -48,7 +50,15 @@ data class CommandLogEntry(
     val userCommand: String,
     val suaResponse: String,
     val actionType: DeviceActionType,
-    val actionSuccess: Boolean = true
+    val actionSuccess: Boolean = true,
+    val isPinnedToMemory: Boolean = false
+)
+
+data class MokoMemoryItem(
+    val id: Long,
+    val factText: String,
+    val timestamp: String,
+    val isAutoExtracted: Boolean = true
 )
 
 data class QuickContact(

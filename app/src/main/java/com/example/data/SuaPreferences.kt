@@ -25,7 +25,8 @@ class SuaPreferences(context: Context) {
         private const val KEY_GEMINI_MODEL = "gemini_model_id"
         private const val KEY_VOICE_LOCALE = "voice_locale"
         private const val KEY_QUICK_CONTACTS = "quick_contacts_real_v3_json"
-        private const val KEY_COMMAND_LOGS = "command_logs_v2_json"
+        private const val KEY_COMMAND_LOGS = "command_logs_v3_json"
+        private const val KEY_MOKO_MEMORIES = "moko_memories_v1_json"
         private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
 
         val SUPPORTED_GEMINI_MODELS = listOf(
@@ -122,10 +123,6 @@ class SuaPreferences(context: Context) {
         }
     }
 
-    /**
-     * Returns the user-entered API key from Settings first, or falls back to BuildConfig.GEMINI_API_KEY
-     * if configured in the AI Studio Secrets panel.
-     */
     fun getEffectiveApiKey(): String {
         val userKey = getSavedUserApiKey()
         if (userKey.isNotEmpty()) return userKey
@@ -180,9 +177,6 @@ class SuaPreferences(context: Context) {
         prefs.edit().putString(KEY_VOICE_LOCALE, locale).apply()
     }
 
-    /**
-     * Returns ONLY user-saved speed dial contacts. Never returns fake fallback phone numbers.
-     */
     fun getQuickContacts(): List<QuickContact> {
         val raw = prefs.getString(KEY_QUICK_CONTACTS, null)
         if (raw.isNullOrBlank()) {
@@ -225,7 +219,7 @@ class SuaPreferences(context: Context) {
 
     fun saveCommandLogs(logs: List<CommandLogEntry>) {
         val arr = JSONArray()
-        logs.take(40).forEach { entry ->
+        logs.take(60).forEach { entry ->
             val obj = JSONObject()
             obj.put("id", entry.id)
             obj.put("timestamp", entry.timestamp)
@@ -233,6 +227,7 @@ class SuaPreferences(context: Context) {
             obj.put("suaResponse", entry.suaResponse)
             obj.put("actionType", entry.actionType.name)
             obj.put("actionSuccess", entry.actionSuccess)
+            obj.put("isPinnedToMemory", entry.isPinnedToMemory)
             arr.put(obj)
         }
         prefs.edit().putString(KEY_COMMAND_LOGS, arr.toString()).apply()
@@ -258,9 +253,48 @@ class SuaPreferences(context: Context) {
                         userCommand = obj.optString("userCommand", ""),
                         suaResponse = obj.optString("suaResponse", ""),
                         actionType = actionType,
-                        actionSuccess = obj.optBoolean("actionSuccess", true)
+                        actionSuccess = obj.optBoolean("actionSuccess", true),
+                        isPinnedToMemory = obj.optBoolean("isPinnedToMemory", false)
                     )
                 )
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveMemoryItems(memories: List<MokoMemoryItem>) {
+        val arr = JSONArray()
+        memories.take(60).forEach { item ->
+            val obj = JSONObject()
+            obj.put("id", item.id)
+            obj.put("factText", item.factText)
+            obj.put("timestamp", item.timestamp)
+            obj.put("isAutoExtracted", item.isAutoExtracted)
+            arr.put(obj)
+        }
+        prefs.edit().putString(KEY_MOKO_MEMORIES, arr.toString()).apply()
+    }
+
+    fun loadMemoryItems(): List<MokoMemoryItem> {
+        val raw = prefs.getString(KEY_MOKO_MEMORIES, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<MokoMemoryItem>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val fact = obj.optString("factText", "").trim()
+                if (fact.isNotEmpty()) {
+                    list.add(
+                        MokoMemoryItem(
+                            id = obj.optLong("id", System.currentTimeMillis() + i),
+                            factText = fact,
+                            timestamp = obj.optString("timestamp", ""),
+                            isAutoExtracted = obj.optBoolean("isAutoExtracted", true)
+                        )
+                    )
+                }
             }
             list
         } catch (_: Exception) {

@@ -247,10 +247,15 @@ class SuaDeviceController(private val context: Context) {
             )
             DeviceActionType.OPEN_SETTINGS -> openSystemSettings(parsed.displayReply, parsed.spokenReply)
             DeviceActionType.TIME_DATE -> reportTimeAndDate(parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.MEMORY_SAVE -> ActionExecutionResult(
+                success = true,
+                displayReply = parsed.displayReply.ifBlank { "MOKO MEMORY // Saved to Memory Vault: ${parsed.memoryFact}" },
+                finalSpokenReply = parsed.spokenReply.ifBlank { "जी बॉस, मैंने यह बात अपनी मेमोरी में सेव कर ली है।" }
+            )
             DeviceActionType.AI_CHAT -> ActionExecutionResult(
                 success = true,
-                displayReply = parsed.displayReply.ifBlank { "SUA Core ready. Standing by for your next command." },
-                finalSpokenReply = parsed.spokenReply.ifBlank { "जी सर, मैं सुआ आपकी सेवा में तैयार हूँ।" }
+                displayReply = parsed.displayReply.ifBlank { "Moko is ready for your next command." },
+                finalSpokenReply = parsed.spokenReply.ifBlank { "जी बॉस, मैं मोको आपकी सेवा में तैयार हूँ।" }
             )
         }
     }

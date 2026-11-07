@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "SUA"
+rootProject.name = "Moko"
 
 include(":app")

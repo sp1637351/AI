@@ -1,6 +1,6 @@
 {
-  "name": "SUA",
-  "description": "SUA (Smart Universal Assistant) - Hindi & English background AI voice assistant for hands-free calls, messages, flashlight, phone lock, brightness, volume, and media control.",
+  "name": "Moko",
+  "description": "Moko - Personal AI Voice & Hardware Assistant with Deep Purple & Neon Violet Glass UI, Online/Sleep background mode, memory-aware conversations, and hands-free device control.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

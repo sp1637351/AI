@@ -3,6 +3,7 @@ package com.example.ai
 import com.example.data.DeviceActionType
 import com.example.data.ParsedCommand
 import com.example.data.SuaPreferences
+import com.example.data.SuaStateRepository
 import com.example.util.HindiTransliterator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,15 +33,21 @@ class SuaBrain(private val prefs: SuaPreferences) {
         if (text.isEmpty()) {
             return@withContext ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
-                displayReply = "SUA READY // Listening for your voice command.",
-                spokenReply = "जी सर, मैं सुआ सुन रही हूँ। कृपया अपना कमांड बोलें।"
+                displayReply = "Moko is listening. Say 'Hi Moko' followed by your command.",
+                spokenReply = "जी बॉस, मैं मोको सुन रही हूँ। बताइए क्या काम करना है?"
             )
+        }
+
+        // 0. Check if user is explicitly asking Moko to remember a fact or asking what Moko remembers
+        val localMemoryCmd = parseMemoryIntentLocally(text)
+        if (localMemoryCmd != null) {
+            return@withContext localMemoryCmd
         }
 
         val localMatch = parseHardwareIntentLocally(text)
         val apiKey = prefs.getEffectiveApiKey()
 
-        // Fast-path unambiguous non-named hardware commands (Flashlight, Lock, Brightness, Volume, Media, Battery, Time, Alarm)
+        // Fast-path unambiguous non-named hardware commands
         if (localMatch != null &&
             localMatch.action != DeviceActionType.CALL &&
             localMatch.action != DeviceActionType.SMS
@@ -48,12 +55,19 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return@withContext localMatch
         }
 
-        // For CALL, SMS, or open-ended queries: if API key is present, let Gemini help transliterate names/messages accurately
+        // For CALL, SMS, or open-ended queries: if API key is present, call Gemini with Memory & Chat History
         var lastApiFailure: GeminiCallOutcome.Failure? = null
         if (apiKey.isNotEmpty()) {
             when (val outcome = callGeminiWithFallback(text, apiKey)) {
                 is GeminiCallOutcome.Success -> {
                     val gemCmd = outcome.command
+                    if (gemCmd.memoryFact.isNotBlank()) {
+                        SuaStateRepository.addMemoryFact(
+                            factText = gemCmd.memoryFact,
+                            isAuto = true,
+                            prefs = prefs
+                        )
+                    }
                     if (gemCmd.action == DeviceActionType.AI_CHAT && localMatch != null) {
                         return@withContext localMatch
                     }
@@ -65,60 +79,149 @@ class SuaBrain(private val prefs: SuaPreferences) {
             }
         }
 
-        // If local parser matched CALL or SMS, execute it (HindiTransliterator handles Devanagari -> Roman contact matching)
+        // If local parser matched CALL or SMS, execute it
         if (localMatch != null) {
             return@withContext localMatch
         }
 
-        // If Gemini API was configured by user but failed with an error, report the exact API error honestly!
+        // Report Gemini error honestly if key was set
         if (lastApiFailure != null) {
             val code = lastApiFailure.httpCode
             val detail = lastApiFailure.errorDetail
             return@withContext ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
-                displayReply = "GEMINI API ERROR (HTTP $code) // $detail. Check your API Key or Model in Settings.",
+                displayReply = "GEMINI API ERROR (HTTP $code) // $detail. Check your API Key or Model in Side Menu -> Settings.",
                 spokenReply = when (code) {
-                    400, 401, 403 -> "माफ़ कीजिए सर, आपकी गूगल जेमिनी एपीआई की मान्य नहीं है। कृपया सेटिंग्स में जाकर अपनी एपीआई की चेक करें।"
-                    429 -> "माफ़ कीजिए सर, आपकी जेमिनी एपीआई की का कोटा पूरा हो गया है।"
-                    else -> "माफ़ कीजिए सर, जेमिनी एआई सर्वर से जुड़ने में समस्या आई है: $detail"
+                    400, 401, 403 -> "माफ़ कीजिए बॉस, आपकी गूगल जेमिनी एपीआई की मान्य नहीं है। कृपया साइड मेनू की सेटिंग्स में जाकर अपनी एपीआई की चेक करें।"
+                    429 -> "माफ़ कीजिए बॉस, आपकी जेमिनी एपीआई की का कोटा पूरा हो गया है।"
+                    else -> "माफ़ कीजिए बॉस, जेमिनी एआई सर्वर से जुड़ने में समस्या आई है।"
                 }
             )
         }
 
-        // Conversational fallback when no API key is configured
+        // Conversational & Memory-aware fallback when offline / no API key
         val lower = text.lowercase()
+        val memories = SuaStateRepository.memoryItems.value
         return@withContext when {
             lower.contains("tumhara naam") || lower.contains("your name") ||
                 text.contains("तुम्हारा नाम") || text.contains("कौन हो") || lower.contains("who are you") -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "IDENTITY // I am SUA (Smart Universal Assistant), your personal tactical AI system.",
-                    spokenReply = "मेरा नाम सुआ है सर। मैं आपकी पर्सनल वॉइस असिस्टेंट हूँ और आपके फोन के सारे काम कर सकती हूँ।"
+                    displayReply = "MOKO AI // I am Moko, your personal voice & memory assistant.",
+                    spokenReply = "मेरा नाम मोको है बॉस! मैं आपकी पर्सनल वॉइस असिस्टेंट हूँ और आपकी बातें याद भी रखती हूँ।"
                 )
             }
-            lower.contains("jarvis") || text.contains("जार्विस") -> {
+            lower.contains("jarvis") || text.contains("जार्विस") || lower.contains("sua") || text.contains("सुआ") -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "SYSTEM CORRECTION // My designation is SUA, not Jarvis. Ready for your command, Sir.",
-                    spokenReply = "मेरा नाम जार्विस नहीं, सुआ है सर! बताइए मुझे क्या काम करना है?"
+                    displayReply = "MOKO AI // My name is now Moko! Say 'Hi Moko' anytime to wake me.",
+                    spokenReply = "बॉस, अब मेरा नाम मोको है! आप कभी भी हाय मोको बोलकर मुझे काम बता सकते हैं।"
                 )
             }
             lower.contains("hello") || lower.contains("hi") || lower.contains("namaste") ||
-                text.contains("नमस्ते") || text.contains("हेलो") || lower.contains("hey sua") -> {
+                text.contains("नमस्ते") || text.contains("हेलो") || lower.contains("hey moko") || lower.contains("hi moko") -> {
+                val memGreeting = if (memories.isNotEmpty()) {
+                    " I also remember ${memories.size} saved facts about you."
+                } else ""
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "SUA ONLINE // Greetings Sir. All systems nominal. Awaiting your directive.",
-                    spokenReply = "नमस्ते सर! मैं सुआ ऑनलाइन हूँ। बताइए आज आपके फोन में क्या काम करूँ?"
+                    displayReply = "MOKO ONLINE // Hello Boss! All systems ready.$memGreeting",
+                    spokenReply = "नमस्ते बॉस! मैं मोको ऑनलाइन हूँ। बताइए आज आपके फोन में क्या काम करूँ?"
                 )
             }
             else -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "GEMINI KEY REQUIRED // Hardware controls work offline. To answer general questions (\"${sanitizeForHud(text)}\"), save your Google Gemini API Key in Settings.",
-                    spokenReply = "जी सर, फोन कंट्रोल कमांड ऑफलाइन काम कर रहे हैं। किसी भी सवाल के एआई जवाब के लिए सेटिंग्स में अपनी गूगल जेमिनी एपीआई की सेव करें।"
+                    displayReply = "GEMINI KEY REQUIRED // Phone controls & memory work offline. For open AI conversation (\"${sanitizeForHud(text)}\"), save your Gemini API Key in Side Menu -> Settings.",
+                    spokenReply = "जी बॉस, फोन कंट्रोल और मेमोरी कमांड ऑफलाइन काम कर रहे हैं। किसी भी सवाल के एआई जवाब के लिए साइड मेनू की सेटिंग्स में अपनी गूगल जेमिनी एपीआई की सेव करें।"
                 )
             }
         }
+    }
+
+    /**
+     * Handles local Memory storage & recall ("याद रखना...", "Remember that...", "मेरा नाम ... है", "तुम्हें क्या याद है?")
+     */
+    fun parseMemoryIntentLocally(input: String): ParsedCommand? {
+        val text = input.trim()
+        val lower = text.lowercase()
+
+        // 1. Check if user is sharing their name ("मेरा नाम राहुल है" / "My name is Rahul")
+        val nameHiMatch = Regex("(?:मेरा नाम|mera naam|my name is)\\s+([\\p{L}a-zA-Z0-9\\s]{2,25}?)(?:\\s+है|\\s+hai|$)", RegexOption.IGNORE_CASE)
+            .find(text)
+        if (nameHiMatch != null && !lower.contains("kya") && !text.contains("क्या")) {
+            val userName = nameHiMatch.groupValues[1].trim()
+            if (userName.isNotEmpty()) {
+                val fact = "User's name is $userName"
+                SuaStateRepository.addMemoryFact(fact, isAuto = true, prefs = prefs)
+                return ParsedCommand(
+                    action = DeviceActionType.MEMORY_SAVE,
+                    memoryFact = fact,
+                    displayReply = "MEMORY SAVED // Remembered: \"$fact\"",
+                    spokenReply = "जी $userName, मैंने अपनी मेमोरी में याद रख लिया है कि आपका नाम $userName है।"
+                )
+            }
+        }
+
+        // 2. Explicit "Remember that..." / "याद रखना कि..." / "याद रखो..."
+        val rememberMatch = Regex(
+            "^(?:moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+|मोको\\s+|हाय\\s+मोको\\s+)?(?:याद रखना कि|याद रखना|याद रखो कि|याद रखो|ये बात याद रखना|remember that|remember|yaad rakhna ki|yaad rakhna|yaad rakho)\\s+(.+)$",
+            RegexOption.IGNORE_CASE
+        ).find(text)
+        if (rememberMatch != null) {
+            val fact = rememberMatch.groupValues[1].trim()
+            if (fact.length >= 2) {
+                val cleanFact = sanitizeForHud(fact)
+                SuaStateRepository.addMemoryFact(cleanFact, isAuto = true, prefs = prefs)
+                return ParsedCommand(
+                    action = DeviceActionType.MEMORY_SAVE,
+                    memoryFact = cleanFact,
+                    displayReply = "MEMORY SAVED // Stored in Moko Memory Vault: \"$cleanFact\"",
+                    spokenReply = "जी बॉस, मैंने यह बात अपनी मेमोरी में सेव कर ली है: $fact"
+                )
+            }
+        }
+
+        // 3. Memory Recall query ("मेरा नाम क्या है?" / "तुम्हें क्या याद है?" / "What do you remember?")
+        val isAskingName = lower.contains("mera naam kya hai") || text.contains("मेरा नाम क्या है") ||
+            lower.contains("what is my name") || lower.contains("who am i")
+        if (isAskingName) {
+            val memories = SuaStateRepository.memoryItems.value
+            val nameFact = memories.firstOrNull {
+                it.factText.contains("name is", ignoreCase = true) ||
+                    it.factText.contains("नाम", ignoreCase = true)
+            }
+            if (nameFact != null) {
+                return ParsedCommand(
+                    action = DeviceActionType.AI_CHAT,
+                    displayReply = "MOKO MEMORY // ${nameFact.factText}",
+                    spokenReply = "जी बॉस, मेरी मेमोरी के अनुसार ${nameFact.factText}"
+                )
+            }
+        }
+
+        val isAskingMemories = lower.contains("kya yaad hai") || text.contains("क्या याद है") ||
+            lower.contains("what do you remember") || lower.contains("show my memory") ||
+            text.contains("मेमोरी बताओ") || lower.contains("meri memory")
+        if (isAskingMemories) {
+            val memories = SuaStateRepository.memoryItems.value
+            return if (memories.isEmpty()) {
+                ParsedCommand(
+                    action = DeviceActionType.AI_CHAT,
+                    displayReply = "MOKO MEMORY // No saved memories yet. Say 'Remember that...' or pin any chat to save a memory.",
+                    spokenReply = "बॉस, अभी मेरी मेमोरी में कोई खास बात सेव नहीं है। आप 'याद रखना कि...' बोलकर कुछ भी सेव कर सकते हैं।"
+                )
+            } else {
+                val summary = memories.take(3).joinToString(" | ") { it.factText }
+                ParsedCommand(
+                    action = DeviceActionType.AI_CHAT,
+                    displayReply = "MOKO MEMORY (${memories.size} saved) // $summary",
+                    spokenReply = "जी बॉस, मुझे आपके बारे में ${memories.size} बातें याद हैं, जैसे कि: ${memories.first().factText}"
+                )
+            }
+        }
+
+        return null
     }
 
     fun sanitizeForHud(input: String): String {
@@ -152,7 +255,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
-        // 1. FLASHLIGHT OFF / ON (Strict: require explicit flashlight/torch OR light + explicit toggle verb)
+        // 1. FLASHLIGHT OFF / ON
         val hasExplicitTorch = lower.contains("flashlight") || lower.contains("flash light") ||
             lower.contains("torch") || text.contains("फ्लैशलाइट") || text.contains("टॉर्च")
         val hasLightWord = (Regex("\\blight\\b").containsMatchIn(lower) || text.contains("लाइट")) &&
@@ -166,14 +269,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return if (hasToggleOffVerb) {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_OFF,
-                    displayReply = "OPTICS STANDBY // Flashlight beam disengaged.",
-                    spokenReply = "जी सर, फ्लैशलाइट बंद कर दी गई है।"
+                    displayReply = "MOKO OPTICS // Flashlight turned OFF.",
+                    spokenReply = "जी बॉस, फ्लैशलाइट बंद कर दी गई है।"
                 )
             } else {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_ON,
-                    displayReply = "OPTICS ONLINE // Flashlight beam engaged.",
-                    spokenReply = "जी सर, फ्लैशलाइट चालू कर दी गई है।"
+                    displayReply = "MOKO OPTICS // Flashlight turned ON.",
+                    spokenReply = "जी बॉस, फ्लैशलाइट चालू कर दी गई है।"
                 )
             }
         }
@@ -186,8 +289,8 @@ class SuaBrain(private val prefs: SuaPreferences) {
         if (hasLockWord && hasPhoneScreenTarget) {
             return ParsedCommand(
                 action = DeviceActionType.LOCK_PHONE,
-                displayReply = "SECURITY PROTOCOL // Engaging device screen lock.",
-                spokenReply = "जी सर, आपका फोन लॉक किया जा रहा है।"
+                displayReply = "MOKO SECURITY // Locking phone screen now.",
+                spokenReply = "जी बॉस, आपका फोन लॉक किया जा रहा है।"
             )
         }
 
@@ -205,29 +308,29 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 lower.contains("full") || text.contains("फुल") -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_SET,
                     numericValue = 100,
-                    displayReply = "LUMINANCE // Display brightness calibrated to 100%.",
-                    spokenReply = "जी सर, ब्राइटनेस 100 प्रतिशत कर दी गई है।"
+                    displayReply = "MOKO DISPLAY // Brightness set to 100%.",
+                    spokenReply = "जी बॉस, ब्राइटनेस 100 प्रतिशत कर दी गई है।"
                 )
                 extractedNum in 5..100 -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_SET,
                     numericValue = extractedNum,
-                    displayReply = "LUMINANCE // Display brightness calibrated to $extractedNum%.",
-                    spokenReply = "जी सर, ब्राइटनेस $extractedNum प्रतिशत कर दी गई है।"
+                    displayReply = "MOKO DISPLAY // Brightness set to $extractedNum%.",
+                    spokenReply = "जी बॉस, ब्राइटनेस $extractedNum प्रतिशत कर दी गई है।"
                 )
                 isDown -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_DOWN,
-                    displayReply = "LUMINANCE // Decreasing display brightness by 25%.",
-                    spokenReply = "जी सर, स्क्रीन की ब्राइटनेस कम कर दी गई है।"
+                    displayReply = "MOKO DISPLAY // Decreasing brightness by 25%.",
+                    spokenReply = "जी बॉस, स्क्रीन की ब्राइटनेस कम कर दी गई है।"
                 )
                 isUp -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_UP,
-                    displayReply = "LUMINANCE // Increasing display brightness by 25%.",
-                    spokenReply = "जी सर, स्क्रीन की ब्राइटनेस बढ़ा दी गई है।"
+                    displayReply = "MOKO DISPLAY // Increasing brightness by 25%.",
+                    spokenReply = "जी बॉस, स्क्रीन की ब्राइटनेस बढ़ा दी गई है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_UP,
-                    displayReply = "LUMINANCE // Adjusting display brightness.",
-                    spokenReply = "जी सर, ब्राइटनेस एडजस्ट कर दी गई है।"
+                    displayReply = "MOKO DISPLAY // Adjusting brightness.",
+                    spokenReply = "जी बॉस, ब्राइटनेस एडजस्ट कर दी गई है।"
                 )
             }
         }
@@ -245,30 +348,30 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return when {
                 isMute -> ParsedCommand(
                     action = DeviceActionType.VOLUME_MUTE,
-                    displayReply = "AUDIO GAIN // System audio muted (0%).",
-                    spokenReply = "जी सर, फोन का साउंड म्यूट कर दिया गया है।"
+                    displayReply = "MOKO AUDIO // System sound muted (0%).",
+                    spokenReply = "जी बॉस, फोन का साउंड म्यूट कर दिया गया है।"
                 )
                 lower.contains("full") || text.contains("फुल") -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = 100,
-                    displayReply = "AUDIO GAIN // Master volume set to 100% maximum.",
-                    spokenReply = "जी सर, साउंड फुल सौ प्रतिशत कर दिया गया है।"
+                    displayReply = "MOKO AUDIO // Volume set to 100%.",
+                    spokenReply = "जी बॉस, साउंड फुल सौ प्रतिशत कर दिया गया है।"
                 )
                 extractedNum in 0..100 -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = extractedNum,
-                    displayReply = "AUDIO GAIN // Master volume set to $extractedNum%.",
-                    spokenReply = "जी सर, साउंड $extractedNum प्रतिशत कर दिया गया है।"
+                    displayReply = "MOKO AUDIO // Volume set to $extractedNum%.",
+                    spokenReply = "जी बॉस, साउंड $extractedNum प्रतिशत कर दिया गया है।"
                 )
                 isDown -> ParsedCommand(
                     action = DeviceActionType.VOLUME_DOWN,
-                    displayReply = "AUDIO GAIN // Decreasing master volume by 20%.",
-                    spokenReply = "जी सर, फोन की आवाज़ कम कर दी गई है।"
+                    displayReply = "MOKO AUDIO // Decreasing volume by 20%.",
+                    spokenReply = "जी बॉस, फोन की आवाज़ कम कर दी गई है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.VOLUME_UP,
-                    displayReply = "AUDIO GAIN // Increasing master volume by 20%.",
-                    spokenReply = "जी सर, फोन का साउंड बढ़ा दिया गया है।"
+                    displayReply = "MOKO AUDIO // Increasing volume by 20%.",
+                    spokenReply = "जी बॉस, फोन का साउंड बढ़ा दिया गया है।"
                 )
             }
         }
@@ -286,23 +389,23 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return when {
                 isNext -> ParsedCommand(
                     action = DeviceActionType.MEDIA_NEXT,
-                    displayReply = "MEDIA ENGINE // Skipping to next track.",
-                    spokenReply = "जी सर, अगला गाना चलाया जा रहा है।"
+                    displayReply = "MOKO MEDIA // Skipping to next track.",
+                    spokenReply = "जी बॉस, अगला गाना चलाया जा रहा है।"
                 )
                 isPrev -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PREV,
-                    displayReply = "MEDIA ENGINE // Returning to previous track.",
-                    spokenReply = "जी सर, पिछला गाना चलाया जा रहा है।"
+                    displayReply = "MOKO MEDIA // Playing previous track.",
+                    spokenReply = "जी बॉस, पिछला गाना चलाया जा रहा है।"
                 )
                 isStop -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PAUSE,
-                    displayReply = "MEDIA ENGINE // Playback paused.",
-                    spokenReply = "जी सर, म्यूजिक रोक दिया गया है।"
+                    displayReply = "MOKO MEDIA // Music playback paused.",
+                    spokenReply = "जी बॉस, म्यूजिक रोक दिया गया है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PLAY,
-                    displayReply = "MEDIA ENGINE // Engaging audio playback.",
-                    spokenReply = "जी सर, म्यूजिक चालू किया जा रहा है।"
+                    displayReply = "MOKO MEDIA // Starting music playback.",
+                    spokenReply = "जी बॉस, म्यूजिक चालू किया जा रहा है।"
                 )
             }
         }
@@ -319,7 +422,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 action = DeviceActionType.SMS,
                 target = targetName,
                 message = msgContent,
-                displayReply = "COMMS SMS // Target: $hudName",
+                displayReply = "MOKO SMS // Target: $hudName",
                 spokenReply = ""
             )
         }
@@ -336,7 +439,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.CALL,
                 target = targetName,
-                displayReply = "COMMS VOICE // Target: $hudName",
+                displayReply = "MOKO CALL // Target: $hudName",
                 spokenReply = ""
             )
         }
@@ -352,7 +455,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 9. ALARM (Supports AM/PM, शाम/रात/दोपहर/सुबह, and minutes like 5:30 or बजकर 30 मिनट)
+        // 9. ALARM
         if (Regex("\\balarm\\b").containsMatchIn(lower) || text.contains("अलार्म")) {
             val (hour24, minute) = parseAlarmHourAndMinute(text)
             val timeFormatted = String.format("%02d:%02d", hour24, minute)
@@ -360,17 +463,17 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 action = DeviceActionType.SET_ALARM,
                 numericValue = hour24,
                 secondaryNumericValue = minute,
-                target = "SUA Tactical Alarm",
-                displayReply = "CHRONO ALARM // Setting system alarm for $timeFormatted.",
+                target = "Moko Alarm",
+                displayReply = "MOKO ALARM // Setting alarm for $timeFormatted.",
                 spokenReply = if (minute > 0) {
-                    "जी सर, $hour24 बजकर $minute मिनट का अलार्म सेट किया जा रहा है।"
+                    "जी बॉस, $hour24 बजकर $minute मिनट का अलार्म सेट किया जा रहा है।"
                 } else {
-                    "जी सर, $hour24 बजे का अलार्म सेट किया जा रहा है।"
+                    "जी बॉस, $hour24 बजे का अलार्म सेट किया जा रहा है।"
                 }
             )
         }
 
-        // 10. TIME / DATE (Strict query matching so random sentences with 'time' don't trigger)
+        // 10. TIME / DATE
         val isTimeQuery = Regex("\\b(what time|current time|time kya|kya time|tell me the time|what is the date|aaj ki tarikh|samay kya|kitne baje)\\b")
             .containsMatchIn(lower) ||
             text.contains("समय क्या") || text.contains("कितने बजे") ||
@@ -389,30 +492,24 @@ class SuaBrain(private val prefs: SuaPreferences) {
         if (lower.contains("open setting") || text.contains("सेटिंग खोल") || text.contains("सेटिंग्स खोल")) {
             return ParsedCommand(
                 action = DeviceActionType.OPEN_SETTINGS,
-                displayReply = "OS CONSOLE // Opening Android System Settings.",
-                spokenReply = "जी सर, फोन की सेटिंग्स खोली जा रही हैं।"
+                displayReply = "MOKO SYSTEM // Opening Android Settings.",
+                spokenReply = "जी बॉस, फोन की सेटिंग्स खोली जा रही हैं।"
             )
         }
 
         return null
     }
 
-    /**
-     * Parses alarm hour (0..23) and minute (0..59) including Hindi/English AM/PM indicators
-     * ("शाम 5 बजे" -> 17:00, "रात 8:30 बजे" -> 20:30, "साढ़े 5 बजे शाम" -> 17:30).
-     */
     fun parseAlarmHourAndMinute(text: String): Pair<Int, Int> {
         val lower = text.lowercase()
         var hour = 7
         var minute = 0
 
-        // 1. Check HH:MM pattern first (e.g. "5:30", "17:45")
         val colonMatch = Regex("(\\d{1,2}):(\\d{2})").find(lower)
         if (colonMatch != null) {
             hour = colonMatch.groupValues[1].toIntOrNull() ?: 7
             minute = colonMatch.groupValues[2].toIntOrNull() ?: 0
         } else {
-            // 2. Check "<H> बजकर <M> मिनट" or "<H> bajkar <M> minute"
             val bajkarMatch = Regex("(\\d{1,2})\\s*(?:बजकर|bajkar|baje)\\s*(\\d{1,2})").find(text)
             if (bajkarMatch != null) {
                 hour = bajkarMatch.groupValues[1].toIntOrNull() ?: 7
@@ -425,7 +522,6 @@ class SuaBrain(private val prefs: SuaPreferences) {
             }
         }
 
-        // Handle Hindi fractional hours: साढ़े (+30m), सवा (+15m), पौने (-15m from hour)
         if (text.contains("साढ़े") || text.contains("साढे") || lower.contains("sadhe")) {
             minute = 30
         } else if (text.contains("सवा") || lower.contains("sawa")) {
@@ -435,7 +531,6 @@ class SuaBrain(private val prefs: SuaPreferences) {
             minute = 45
         }
 
-        // Determine AM / PM
         val isPm = Regex("\\bpm\\b|\\bp\\.m\\.\\b").containsMatchIn(lower) ||
             text.contains("शाम") || text.contains("रात") || text.contains("दोपहर") ||
             lower.contains("shaam") || lower.contains("sham") || lower.contains("raat") ||
@@ -453,17 +548,12 @@ class SuaBrain(private val prefs: SuaPreferences) {
         return Pair(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
     }
 
-    /**
-     * Extracts the spoken contact name in Hindi or English without ever defaulting to a fake name.
-     */
     fun extractTargetNameForCallOrSms(text: String): String {
-        // 1. Check if a phone number was spoken directly
         val phoneMatch = Regex("\\+?\\d[\\d\\s-]{5,13}\\d").find(text)
         if (phoneMatch != null) {
             return phoneMatch.value.replace(Regex("[^0-9+]"), "")
         }
 
-        // 2. Hindi pattern: "<Name> को कॉल..." / "<Name> को फोन..." / "<Name> को मैसेज..."
         val koMatch = Regex("([\\p{L}\\s]+?)\\s+को\\s+(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|call|phone|message|sms)").find(text)
         if (koMatch != null) {
             val candidate = cleanExtractedContactName(koMatch.groupValues[1])
@@ -476,15 +566,13 @@ class SuaBrain(private val prefs: SuaPreferences) {
             if (candidate.isNotEmpty()) return candidate
         }
 
-        // 3. Hinglish pattern: "<Name> ko call..." / "<Name> ko message..."
         val hinglishKo =
-            Regex("(?i)(?:mera\\s+|meri\\s+|sua\\s+|hey\\s+sua\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:call|phone|fone|message|sms|msg)").find(text)
+            Regex("(?i)(?:mera\\s+|meri\\s+|moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:call|phone|fone|message|sms|msg)").find(text)
         if (hinglishKo != null) {
             val candidate = cleanExtractedContactName(hinglishKo.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
         }
 
-        // 4. English pattern: "Call <Name>" / "Dial <Name>" / "Send SMS to <Name>" / "Message <Name>"
         val englishCall =
             Regex("(?i)(?:call|dial|phone|message|sms|text)\\s+(?:to\\s+)?([a-zA-Z\\p{L}]+)").find(text)
         if (englishCall != null) {
@@ -497,7 +585,10 @@ class SuaBrain(private val prefs: SuaPreferences) {
 
     private fun cleanExtractedContactName(raw: String): String {
         return raw.trim()
-            .replace(Regex("(?i)^(hey\\s+sua|ok\\s+sua|hello\\s+sua|suno\\s+sua|sua|हे\\s+सुआ|सुनो\\s+सुआ|सुआ|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"), "")
+            .replace(
+                Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|suno\\s+moko|moko|moco|हाय\\s+मोको|हे\\s+मोको|सुनो\\s+मोको|मोको|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"),
+                ""
+            )
             .replace(Regex("(?i)\\s+(को|ko|पे|पर|par)$"), "")
             .trim()
     }
@@ -529,7 +620,6 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 is GeminiCallOutcome.Success -> return outcome
                 is GeminiCallOutcome.Failure -> {
                     lastFailure = outcome
-                    // Only retry next model on 404 (model not found / deprecated); stop immediately on 400/401/403/429
                     if (outcome.httpCode != 404) {
                         return outcome
                     }
@@ -545,21 +635,40 @@ class SuaBrain(private val prefs: SuaPreferences) {
         modelId: String
     ): GeminiCallOutcome {
         return try {
+            val savedMemories = SuaStateRepository.memoryItems.value
+                .take(15)
+                .joinToString("\n") { "- ${it.factText}" }
+                .ifBlank { "No saved memories yet." }
+
+            val recentConversation = SuaStateRepository.commandLogs.value
+                .take(6)
+                .reversed()
+                .joinToString("\n") { "User: ${it.userCommand} | Moko: ${it.suaResponse}" }
+                .ifBlank { "No prior conversation in this session." }
+
             val systemInstruction = """
-                You are SUA (Smart Universal Assistant), an Iron Man style tactical AI assistant for Android.
+                You are Moko ("मोको"), a smart, friendly, memory-aware personal AI assistant for Android.
                 IMPORTANT RULES:
-                1. Your name is strictly SUA, NEVER Jarvis.
-                2. Understand Hindi, Hinglish, and English voice commands.
-                3. If the user asks to CALL or SMS someone (e.g. 'राहुल को कॉल करो'), always transliterate the contact's name into standard English script in the 'target' field (e.g. 'Rahul').
-                4. Return ONLY a valid JSON object with this exact schema:
+                1. Your name is strictly Moko (मोको), NEVER Jarvis or SUA.
+                2. Use the SAVED USER MEMORIES and RECENT CONVERSATION HISTORY below to personalize your answers and remember facts the user told you earlier:
+                [SAVED USER MEMORIES]:
+                $savedMemories
+                
+                [RECENT CONVERSATION HISTORY]:
+                $recentConversation
+                
+                3. If the user shares a new personal fact, preference, name, reminder, or asks you to remember something, put a short English summary of that fact in 'memoryFact' (otherwise "").
+                4. If the user asks to CALL or SMS someone (e.g. 'राहुल को कॉल करो'), always transliterate the contact's name into standard English script in the 'target' field (e.g. 'Rahul').
+                5. Return ONLY a valid JSON object with this exact schema:
                 {
-                  "action": "CALL" | "SMS" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "TIME_DATE" | "AI_CHAT",
+                  "action": "CALL" | "SMS" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
                   "target": "contact name in English Roman script (e.g. 'Rahul', 'Khushi') or phone number if CALL/SMS, or alarm label, otherwise empty string",
                   "message": "SMS text content if action is SMS, otherwise empty string",
                   "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm 24h hour, or -1 if not applicable),
                   "secondaryNumericValue": integer (0-59 for alarm minutes, default 0),
-                  "displayReply": "Concise, futuristic Iron Man HUD response strictly in English (NO Devanagari/Hindi script here).",
-                  "spokenReply": "Natural, polite spoken response in Hindi (Devanagari) as SUA so TextToSpeech speaks in fluent Hindi."
+                  "memoryFact": "Short English summary if user shared a new personal fact/preference to remember, else empty string",
+                  "displayReply": "Concise response in clean English for the on-screen chat card.",
+                  "spokenReply": "Natural, warm spoken response in Hindi (Devanagari) as Moko so TextToSpeech speaks in fluent Hindi."
                 }
             """.trimIndent()
 
@@ -583,7 +692,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 put(
                     "generationConfig",
                     JSONObject().apply {
-                        put("temperature", 0.2)
+                        put("temperature", 0.3)
                         put("responseMimeType", "application/json")
                     }
                 )
@@ -636,9 +745,10 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 }
 
                 val displayEn = parsedObj.optString("displayReply", "")
-                    .ifBlank { "SUA CORE // Command processed." }
+                    .ifBlank { "MOKO // Command processed." }
                 val spokenHi = parsedObj.optString("spokenReply", "")
-                    .ifBlank { "जी सर, आपका कमांड पूरा कर दिया गया है।" }
+                    .ifBlank { "जी बॉस, आपका काम पूरा कर दिया गया है।" }
+                val extractedMemory = parsedObj.optString("memoryFact", "").trim()
 
                 GeminiCallOutcome.Success(
                     ParsedCommand(
@@ -648,7 +758,8 @@ class SuaBrain(private val prefs: SuaPreferences) {
                         numericValue = parsedObj.optInt("numericValue", -1),
                         secondaryNumericValue = parsedObj.optInt("secondaryNumericValue", 0),
                         displayReply = displayEn,
-                        spokenReply = spokenHi
+                        spokenReply = spokenHi,
+                        memoryFact = extractedMemory
                     )
                 )
             }

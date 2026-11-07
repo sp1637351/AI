@@ -17,11 +17,11 @@ object SuaStateRepository {
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
 
-    private val _liveTranscript = MutableStateFlow("AWAITING VOICE COMMAND...")
+    private val _liveTranscript = MutableStateFlow("Say 'Hi Moko' or type a message below...")
     val liveTranscript: StateFlow<String> = _liveTranscript.asStateFlow()
 
     private val _lastSuaReply = MutableStateFlow(
-        "SUA ONLINE // Say 'SUA' or 'Hey SUA' followed by your command in background mode."
+        "Moko is ready. Switch to ONLINE mode for background & lock-screen listening, or tap SLEEP to pause background mic."
     )
     val lastSuaReply: StateFlow<String> = _lastSuaReply.asStateFlow()
 
@@ -43,6 +43,9 @@ object SuaStateRepository {
     private val _commandLogs = MutableStateFlow<List<CommandLogEntry>>(emptyList())
     val commandLogs: StateFlow<List<CommandLogEntry>> = _commandLogs.asStateFlow()
 
+    private val _memoryItems = MutableStateFlow<List<MokoMemoryItem>>(emptyList())
+    val memoryItems: StateFlow<List<MokoMemoryItem>> = _memoryItems.asStateFlow()
+
     private val _audioRmsDb = MutableStateFlow(0f)
     val audioRmsDb: StateFlow<Float> = _audioRmsDb.asStateFlow()
 
@@ -53,7 +56,7 @@ object SuaStateRepository {
         lastWakeSessionTimestampMs = System.currentTimeMillis()
     }
 
-    fun isWithinWakeConversationWindow(windowMs: Long = 20_000L): Boolean {
+    fun isWithinWakeConversationWindow(windowMs: Long = 22_000L): Boolean {
         val elapsed = System.currentTimeMillis() - lastWakeSessionTimestampMs
         return lastWakeSessionTimestampMs > 0L && elapsed in 0..windowMs
     }
@@ -111,6 +114,12 @@ object SuaStateRepository {
         }
     }
 
+    fun setInitialMemories(memories: List<MokoMemoryItem>) {
+        if (_memoryItems.value.isEmpty() && memories.isNotEmpty()) {
+            _memoryItems.value = memories
+        }
+    }
+
     fun addCommandLog(
         userCommand: String,
         suaResponse: String,
@@ -118,7 +127,7 @@ object SuaStateRepository {
         actionSuccess: Boolean = true,
         prefs: SuaPreferences? = null
     ) {
-        val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+        val timeFmt = SimpleDateFormat("hh:mm a", Locale.US)
         val entry = CommandLogEntry(
             id = System.currentTimeMillis(),
             timestamp = timeFmt.format(Date()),
@@ -127,13 +136,63 @@ object SuaStateRepository {
             actionType = actionType,
             actionSuccess = actionSuccess
         )
-        val updated = listOf(entry) + _commandLogs.value.take(39)
+        val updated = listOf(entry) + _commandLogs.value.take(59)
         _commandLogs.value = updated
         prefs?.saveCommandLogs(updated)
+    }
+
+    fun deleteCommandLog(logId: Long, prefs: SuaPreferences? = null) {
+        val updated = _commandLogs.value.filterNot { it.id == logId }
+        _commandLogs.value = updated
+        prefs?.saveCommandLogs(updated)
+    }
+
+    fun pinCommandLogToMemory(entry: CommandLogEntry, prefs: SuaPreferences? = null) {
+        val updatedLogs = _commandLogs.value.map {
+            if (it.id == entry.id) it.copy(isPinnedToMemory = true) else it
+        }
+        _commandLogs.value = updatedLogs
+        prefs?.saveCommandLogs(updatedLogs)
+
+        val factSummary = "User said: \"${entry.userCommand}\" -> Moko: \"${entry.suaResponse}\""
+        addMemoryFact(factSummary, isAuto = false, prefs = prefs)
     }
 
     fun clearLogs(prefs: SuaPreferences? = null) {
         _commandLogs.value = emptyList()
         prefs?.saveCommandLogs(emptyList())
+    }
+
+    fun addMemoryFact(
+        factText: String,
+        isAuto: Boolean = true,
+        prefs: SuaPreferences? = null
+    ) {
+        val clean = factText.trim()
+        if (clean.isEmpty()) return
+        // Avoid exact duplicate memories
+        if (_memoryItems.value.any { it.factText.equals(clean, ignoreCase = true) }) return
+
+        val timeFmt = SimpleDateFormat("dd MMM, hh:mm a", Locale.US)
+        val newItem = MokoMemoryItem(
+            id = System.currentTimeMillis(),
+            factText = clean,
+            timestamp = timeFmt.format(Date()),
+            isAutoExtracted = isAuto
+        )
+        val updated = listOf(newItem) + _memoryItems.value.take(59)
+        _memoryItems.value = updated
+        prefs?.saveMemoryItems(updated)
+    }
+
+    fun deleteMemoryItem(memoryId: Long, prefs: SuaPreferences? = null) {
+        val updated = _memoryItems.value.filterNot { it.id == memoryId }
+        _memoryItems.value = updated
+        prefs?.saveMemoryItems(updated)
+    }
+
+    fun clearMemories(prefs: SuaPreferences? = null) {
+        _memoryItems.value = emptyList()
+        prefs?.saveMemoryItems(emptyList())
     }
 }
