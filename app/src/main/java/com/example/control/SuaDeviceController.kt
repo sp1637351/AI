@@ -1,10 +1,13 @@
 package com.example.control
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -14,6 +17,7 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -27,6 +31,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.admin.SuaDeviceAdminReceiver
 import com.example.data.DeviceActionType
+import com.example.data.MokoOperatingMode
 import com.example.data.ParsedCommand
 import com.example.data.PermissionStatusItem
 import com.example.data.QuickContact
@@ -98,6 +103,9 @@ class SuaDeviceController(private val context: Context) {
             Manifest.permission.SEND_SMS,
             Manifest.permission.CAMERA
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            list.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             list.add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -216,6 +224,10 @@ class SuaDeviceController(private val context: Context) {
             DeviceActionType.WHATSAPP_MSG -> sendWhatsAppMessage(parsed.target, parsed.message, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.FLASHLIGHT_ON -> setFlashlight(true, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.FLASHLIGHT_OFF -> setFlashlight(false, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.BLUETOOTH_ON -> controlBluetooth(true, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.BLUETOOTH_OFF -> controlBluetooth(false, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.INTERNET_ON -> controlInternetConnectivity(true, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.INTERNET_OFF -> controlInternetConnectivity(false, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.LOCK_PHONE -> lockPhoneScreen(parsed.displayReply, parsed.spokenReply)
             DeviceActionType.BRIGHTNESS_UP -> adjustBrightness(delta = 25, explicit = -1, displayReply = parsed.displayReply, spokenReply = parsed.spokenReply)
             DeviceActionType.BRIGHTNESS_DOWN -> adjustBrightness(delta = -25, explicit = -1, displayReply = parsed.displayReply, spokenReply = parsed.spokenReply)
@@ -254,6 +266,7 @@ class SuaDeviceController(private val context: Context) {
                 displayReply = parsed.displayReply.ifBlank { "CUSTOM CMD // Executed '${parsed.target}'" },
                 finalSpokenReply = parsed.spokenReply.ifBlank { "जी ${prefs.getUserName()}, आपका कस्टम कमांड पूरा हो गया।" }
             )
+            DeviceActionType.SWITCH_MODE -> executeModeSwitch(parsed.target, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.TIME_DATE -> reportTimeAndDate(parsed.displayReply, parsed.spokenReply)
             DeviceActionType.MEMORY_SAVE -> ActionExecutionResult(
                 success = true,
@@ -266,6 +279,133 @@ class SuaDeviceController(private val context: Context) {
                 finalSpokenReply = parsed.spokenReply.ifBlank { "जी ${prefs.getUserName()}, मैं ${prefs.getAssistantName()} आपकी सेवा में तैयार हूँ।" }
             )
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
+    fun controlBluetooth(
+        enable: Boolean,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val userName = prefs.getUserName()
+        val btManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter: BluetoothAdapter? = btManager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+
+        var toggledDirectly = false
+        try {
+            if (adapter != null) {
+                val hasBtPerm = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                if (hasBtPerm) {
+                    toggledDirectly = if (enable) adapter.enable() else adapter.disable()
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        if (!toggledDirectly) {
+            try {
+                val btIntent = if (enable) {
+                    Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                } else {
+                    Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                }
+                launchActivityWithBackgroundSupport(
+                    btIntent,
+                    if (enable) "Turn ON Bluetooth" else "Turn OFF Bluetooth",
+                    "Tap to control Bluetooth"
+                )
+            } catch (_: Exception) {
+                try {
+                    val fallback = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                    launchActivityWithBackgroundSupport(fallback, "Bluetooth Settings", "Open Bluetooth Settings")
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        val stateWord = if (enable) "ON" else "OFF"
+        return ActionExecutionResult(
+            success = true,
+            displayReply = customDisplay.ifBlank { "BLUETOOTH // Bluetooth turned $stateWord." },
+            finalSpokenReply = customSpoken.ifBlank {
+                if (enable) "जी $userName, ब्लूटूथ चालू किया जा रहा है।"
+                else "जी $userName, ब्लूटूथ बंद किया जा रहा है।"
+            }
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    fun controlInternetConnectivity(
+        enable: Boolean,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val userName = prefs.getUserName()
+        var toggledWifiDirectly = false
+        try {
+            val wifiManager = appContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && wifiManager != null) {
+                toggledWifiDirectly = wifiManager.setWifiEnabled(enable)
+            }
+        } catch (_: Exception) {
+        }
+
+        if (!toggledWifiDirectly) {
+            try {
+                val panelIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                } else {
+                    Intent(Settings.ACTION_WIRELESS_SETTINGS)
+                }
+                launchActivityWithBackgroundSupport(
+                    panelIntent,
+                    if (enable) "Turn ON Internet / Wi-Fi" else "Turn OFF Internet / Wi-Fi",
+                    "Tap to toggle Wi-Fi or Mobile Data"
+                )
+            } catch (_: Exception) {
+                try {
+                    val wifiIntent = Intent(Settings.ACTION_WIFI_SETTINGS)
+                    launchActivityWithBackgroundSupport(wifiIntent, "Wi-Fi & Internet", "Open Wi-Fi Settings")
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        val stateWord = if (enable) "ON" else "OFF"
+        return ActionExecutionResult(
+            success = true,
+            displayReply = customDisplay.ifBlank { "INTERNET & WI-FI // Opening Internet / Wi-Fi toggle ($stateWord)." },
+            finalSpokenReply = customSpoken.ifBlank {
+                if (enable) "जी $userName, इंटरनेट और वाई-फाई चालू किया जा रहा है।"
+                else "जी $userName, इंटरनेट और वाई-फाई बंद करने का पैनल खोल दिया गया है।"
+            }
+        )
+    }
+
+    private fun executeModeSwitch(
+        targetModeName: String,
+        customDisplay: String,
+        customSpoken: String
+    ): ActionExecutionResult {
+        val mode = when (targetModeName.uppercase()) {
+            "SLEEP" -> MokoOperatingMode.SLEEP
+            "OFFLINE" -> MokoOperatingMode.OFFLINE
+            else -> MokoOperatingMode.ONLINE
+        }
+        SuaStateRepository.setOperatingMode(mode)
+        return ActionExecutionResult(
+            success = true,
+            displayReply = customDisplay.ifBlank { "MODE SWITCHED // Active mode: ${mode.label} (${mode.subtitle})" },
+            finalSpokenReply = customSpoken.ifBlank {
+                when (mode) {
+                    MokoOperatingMode.ONLINE -> "जी ${prefs.getUserName()}, अब मैं ऑनलाइन मोड में हूँ।"
+                    MokoOperatingMode.SLEEP -> "जी ${prefs.getUserName()}, अब मैं स्लीप मोड में हूँ। बिना इंटरनेट के सभी फोन कमांड और कॉल काम करेंगे।"
+                    MokoOperatingMode.OFFLINE -> "जी ${prefs.getUserName()}, अब मैं ऑफलाइन हो रही हूँ। बैकग्राउंड माइक बंद किया जा रहा है।"
+                }
+            }
+        )
     }
 
     private fun openInstalledApp(

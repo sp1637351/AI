@@ -8,12 +8,22 @@ enum class SuaStatus {
     ERROR
 }
 
+enum class MokoOperatingMode(val label: String, val subtitle: String) {
+    ONLINE("ONLINE", "Full AI + Hardware & Voice Active"),
+    SLEEP("SLEEP", "Offline Hardware, Calls, Bluetooth & Internet Only"),
+    OFFLINE("OFFLINE", "Background Service Completely Off")
+}
+
 enum class DeviceActionType(val label: String, val codeTag: String) {
     CALL("VOICE CALL", "MOKO.CALL"),
     SMS("SEND SMS", "MOKO.SMS"),
     WHATSAPP_MSG("WHATSAPP MSG", "MOKO.WHATSAPP"),
     FLASHLIGHT_ON("TORCH ON", "MOKO.TORCH.ON"),
     FLASHLIGHT_OFF("TORCH OFF", "MOKO.TORCH.OFF"),
+    BLUETOOTH_ON("BLUETOOTH ON", "MOKO.BT.ON"),
+    BLUETOOTH_OFF("BLUETOOTH OFF", "MOKO.BT.OFF"),
+    INTERNET_ON("INTERNET ON", "MOKO.NET.ON"),
+    INTERNET_OFF("INTERNET OFF", "MOKO.NET.OFF"),
     LOCK_PHONE("SCREEN LOCK", "MOKO.LOCK"),
     BRIGHTNESS_UP("BRIGHTNESS UP", "MOKO.BRIGHT.UP"),
     BRIGHTNESS_DOWN("BRIGHTNESS DOWN", "MOKO.BRIGHT.DOWN"),
@@ -33,6 +43,7 @@ enum class DeviceActionType(val label: String, val codeTag: String) {
     TIME_DATE("TIME & DATE", "MOKO.TIME"),
     MEMORY_SAVE("MEMORY SAVED", "MOKO.MEMORY"),
     CUSTOM_CMD("CUSTOM COMMAND", "MOKO.CUSTOM"),
+    SWITCH_MODE("SWITCH MODE", "MOKO.MODE"),
     AI_CHAT("AI RESPONSE", "MOKO.CHAT")
 }
 

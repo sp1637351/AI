@@ -58,11 +58,11 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -109,6 +109,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.DeviceActionType
+import com.example.data.MokoOperatingMode
 import com.example.data.PendingCommsConfirmation
 import com.example.data.SuaPreferences
 import com.example.data.SuaStatus
@@ -134,6 +135,8 @@ fun SuaDashboardScreen(
     onOpenSettings: () -> Unit
 ) {
     val status by viewModel.status.collectAsStateWithLifecycle()
+    val operatingMode by viewModel.operatingMode.collectAsStateWithLifecycle()
+    val wakeRemainingSeconds by viewModel.wakeSessionRemainingSeconds.collectAsStateWithLifecycle()
     val isBgRunning by viewModel.isBackgroundServiceRunning.collectAsStateWithLifecycle()
     val liveTranscript by viewModel.liveTranscript.collectAsStateWithLifecycle()
     val lastSuaReply by viewModel.lastSuaReply.collectAsStateWithLifecycle()
@@ -152,6 +155,7 @@ fun SuaDashboardScreen(
     val assistantName by viewModel.assistantName.collectAsStateWithLifecycle()
 
     var commandInput by remember { mutableStateOf("") }
+    var pendingRequestedMode by remember { mutableStateOf(MokoOperatingMode.ONLINE) }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
@@ -163,15 +167,28 @@ fun SuaDashboardScreen(
         val micGranted = permissions[Manifest.permission.RECORD_AUDIO] == true ||
             viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO)
         if (micGranted) {
-            viewModel.activateOnlineMode()
+            if (pendingRequestedMode == MokoOperatingMode.SLEEP) {
+                viewModel.activateSleepMode()
+            } else {
+                viewModel.activateOnlineMode()
+            }
         } else {
             viewModel.onMicPermissionDenied()
         }
     }
 
-    fun requestOnlineMode() {
+    fun requestModeWithMicPermission(targetMode: MokoOperatingMode) {
+        if (targetMode == MokoOperatingMode.OFFLINE) {
+            viewModel.activateOfflineMode()
+            return
+        }
+        pendingRequestedMode = targetMode
         if (viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO)) {
-            viewModel.activateOnlineMode()
+            if (targetMode == MokoOperatingMode.SLEEP) {
+                viewModel.activateSleepMode()
+            } else {
+                viewModel.activateOnlineMode()
+            }
         } else {
             micPermLauncher.launch(
                 viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
@@ -203,7 +220,8 @@ fun SuaDashboardScreen(
                 MokoSideDrawerContent(
                     assistantName = assistantName,
                     userName = userName,
-                    isOnline = isBgRunning,
+                    operatingMode = operatingMode,
+                    wakeRemainingSeconds = wakeRemainingSeconds,
                     hasApiKey = hasApiKey,
                     batteryPercent = batteryPercent,
                     isFlashlightOn = isFlashlightOn,
@@ -221,8 +239,9 @@ fun SuaDashboardScreen(
                             onOpenSettings()
                         }
                     },
-                    onSwitchToOnline = { requestOnlineMode() },
-                    onSwitchToSleep = { viewModel.activateSleepMode() },
+                    onSwitchToOnline = { requestModeWithMicPermission(MokoOperatingMode.ONLINE) },
+                    onSwitchToSleep = { requestModeWithMicPermission(MokoOperatingMode.SLEEP) },
+                    onSwitchToOffline = { viewModel.activateOfflineMode() },
                     onToggleFlashlight = { viewModel.toggleFlashlightDirect() },
                     onLockPhone = { viewModel.lockScreenDirect() },
                     onBrightnessChange = { viewModel.adjustBrightnessDirect(it, speakFeedback = false) },
@@ -285,20 +304,20 @@ fun SuaDashboardScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = assistantName.uppercase(),
-                                        style = MaterialTheme.typography.titleLarge,
+                                        style = MaterialTheme.typography.titleMedium,
                                         color = SuaTextPrimary,
                                         fontWeight = FontWeight.ExtraBold
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(SuaCyan.copy(alpha = 0.16f))
                                             .border(1.dp, SuaCyan.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .padding(horizontal = 5.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "KALPA AI VOICE",
+                                            text = "KALPA AI",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SuaCyan,
                                             fontWeight = FontWeight.Bold
@@ -306,23 +325,34 @@ fun SuaDashboardScreen(
                                     }
                                 }
                                 Text(
-                                    text = if (isBgRunning) {
-                                        "ONLINE • Say 'Ok $assistantName' ($userName)"
-                                    } else {
-                                        "SLEEP MODE • Background Mic Off"
+                                    text = when (operatingMode) {
+                                        MokoOperatingMode.ONLINE ->
+                                            if (wakeRemainingSeconds > 0) "ONLINE • Active ${wakeRemainingSeconds}s"
+                                            else "ONLINE • Standby ('Hi $assistantName')"
+                                        MokoOperatingMode.SLEEP ->
+                                            if (wakeRemainingSeconds > 0) "SLEEP • Hardware ${wakeRemainingSeconds}s"
+                                            else "SLEEP • Offline Hardware ('Hi $assistantName')"
+                                        MokoOperatingMode.OFFLINE ->
+                                            "OFFLINE • Background Mic Off"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isBgRunning) SuaEmerald else SuaTextSecondary
+                                    color = when (operatingMode) {
+                                        MokoOperatingMode.ONLINE -> SuaEmerald
+                                        MokoOperatingMode.SLEEP -> SuaAmber
+                                        MokoOperatingMode.OFFLINE -> SuaTextSecondary
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         },
                         actions = {
-                            OnlineSleepSegmentedSwitch(
-                                isOnline = isBgRunning,
-                                onSelectOnline = { requestOnlineMode() },
-                                onSelectSleep = { viewModel.activateSleepMode() }
+                            ThreeModeSegmentedSwitch(
+                                currentMode = operatingMode,
+                                onSelectOnline = { requestModeWithMicPermission(MokoOperatingMode.ONLINE) },
+                                onSelectSleep = { requestModeWithMicPermission(MokoOperatingMode.SLEEP) },
+                                onSelectOffline = { viewModel.activateOfflineMode() }
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
                             IconButton(
                                 onClick = onOpenSettings,
                                 modifier = Modifier.testTag("top_settings_button")
@@ -369,27 +399,40 @@ fun SuaDashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                // 1. VOICE BUTTON
+                                // 1. VOICE BUTTON (Wakes 60s window or starts Online Mode)
+                                val isVoiceActive = isBgRunning && wakeRemainingSeconds > 0
                                 Button(
                                     onClick = {
-                                        if (isBgRunning) {
-                                            viewModel.activateSleepMode()
+                                        if (operatingMode == MokoOperatingMode.OFFLINE) {
+                                            requestModeWithMicPermission(MokoOperatingMode.ONLINE)
                                         } else {
-                                            requestOnlineMode()
+                                            viewModel.wakeOrToggleFromOrb()
                                         }
                                     },
                                     modifier = Modifier
                                         .height(52.dp)
                                         .border(
                                             1.2.dp,
-                                            if (isBgRunning) SuaEmerald else SuaCyan,
+                                            when {
+                                                isVoiceActive -> SuaEmerald
+                                                operatingMode == MokoOperatingMode.SLEEP -> SuaAmber
+                                                else -> SuaCyan
+                                            },
                                             RoundedCornerShape(14.dp)
                                         )
                                         .testTag("bottom_voice_toggle_button"),
                                     shape = RoundedCornerShape(14.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isBgRunning) SuaEmerald.copy(alpha = 0.22f) else SuaSurfaceElevated,
-                                        contentColor = if (isBgRunning) SuaEmerald else SuaCyan
+                                        containerColor = when {
+                                            isVoiceActive -> SuaEmerald.copy(alpha = 0.22f)
+                                            operatingMode == MokoOperatingMode.SLEEP -> SuaAmber.copy(alpha = 0.22f)
+                                            else -> SuaSurfaceElevated
+                                        },
+                                        contentColor = when {
+                                            isVoiceActive -> SuaEmerald
+                                            operatingMode == MokoOperatingMode.SLEEP -> SuaAmber
+                                            else -> SuaCyan
+                                        }
                                     )
                                 ) {
                                     Icon(
@@ -399,7 +442,11 @@ fun SuaDashboardScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (isBgRunning) "ON" else "VOICE",
+                                        text = when {
+                                            isVoiceActive -> "${wakeRemainingSeconds}s"
+                                            isBgRunning -> "WAKE"
+                                            else -> "VOICE"
+                                        },
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.ExtraBold
                                     )
@@ -414,7 +461,7 @@ fun SuaDashboardScreen(
                                         .testTag("command_input_field"),
                                     placeholder = {
                                         Text(
-                                            text = "Ask $assistantName (Call, SMS, WhatsApp)...",
+                                            text = "Ask $assistantName (Call, Bluetooth Off, SMS)...",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = SuaTextSecondary,
                                             maxLines = 1,
@@ -491,7 +538,7 @@ fun SuaDashboardScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "USER: ${userName.uppercase()} • DEV: ${SuaPreferences.DEVELOPER_NAME}",
                                 style = MaterialTheme.typography.labelMedium,
@@ -499,11 +546,13 @@ fun SuaDashboardScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "WAKE-WORD: \"OK ${assistantName.uppercase()}\" / \"HI ${assistantName.uppercase()}\"",
+                                text = "SAY \"HI ${assistantName.uppercase()}\" ONCE -> TALK CONTINUOUSLY (60s AUTO-STANDBY)",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SuaCyan
                             )
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         OutlinedButton(
                             onClick = onOpenSettings,
@@ -538,21 +587,22 @@ fun SuaDashboardScreen(
                         }
                     }
 
-                    // RESTORED DEEP PURPLE & NEON VIOLET GLASS ORB CARD
+                    // RESTORED DEEP PURPLE & NEON VIOLET GLASS ORB CARD WITH 60s COUNTDOWN BADGE
                     NeonVioletGlassOrbCard(
                         assistantName = assistantName,
                         userName = userName,
                         status = status,
-                        isOnline = isBgRunning,
+                        operatingMode = operatingMode,
+                        wakeRemainingSeconds = wakeRemainingSeconds,
                         audioRms = audioRms,
                         liveTranscript = liveTranscript,
                         lastReply = lastSuaReply,
                         memoryCount = memoryItems.size,
-                        onToggleOnlineSleep = {
-                            if (isBgRunning) {
-                                viewModel.activateSleepMode()
+                        onTapOrb = {
+                            if (operatingMode == MokoOperatingMode.OFFLINE) {
+                                requestModeWithMicPermission(MokoOperatingMode.ONLINE)
                             } else {
-                                requestOnlineMode()
+                                viewModel.wakeOrToggleFromOrb()
                             }
                         },
                         onTestVoice = { viewModel.testVoiceGreeting() },
@@ -704,83 +754,85 @@ private fun QuickGlassChip(
 }
 
 @Composable
-private fun OnlineSleepSegmentedSwitch(
-    isOnline: Boolean,
+private fun ThreeModeSegmentedSwitch(
+    currentMode: MokoOperatingMode,
     onSelectOnline: () -> Unit,
-    onSelectSleep: () -> Unit
+    onSelectSleep: () -> Unit,
+    onSelectOffline: () -> Unit
 ) {
+    val borderCol = when (currentMode) {
+        MokoOperatingMode.ONLINE -> SuaEmerald.copy(alpha = 0.85f)
+        MokoOperatingMode.SLEEP -> SuaAmber.copy(alpha = 0.85f)
+        MokoOperatingMode.OFFLINE -> SuaCrimson.copy(alpha = 0.7f)
+    }
+
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(SuaSurfaceElevated.copy(alpha = 0.9f))
+            .background(SuaSurfaceElevated.copy(alpha = 0.92f))
             .border(
                 width = 1.2.dp,
-                color = if (isOnline) SuaEmerald.copy(alpha = 0.8f) else SuaBorder,
+                color = borderCol,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(3.dp),
+            .padding(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // ONLINE PILL BUTTON
+        // 1. ONLINE PILL BUTTON (Full AI + Hardware + 60s Window)
+        val isOnline = currentMode == MokoOperatingMode.ONLINE
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(9.dp))
                 .background(if (isOnline) SuaEmerald else Color.Transparent)
-                .clickable {
-                    if (!isOnline) onSelectOnline()
-                }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .clickable { onSelectOnline() }
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .testTag("online_mode_button"),
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = "Switch to Online Mode",
-                    tint = if (isOnline) SuaObsidian else SuaTextSecondary,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "ONLINE",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (isOnline) SuaObsidian else SuaTextSecondary
-                )
-            }
+            Text(
+                text = "ONLINE",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (isOnline) SuaObsidian else SuaTextSecondary
+            )
         }
 
-        // SLEEP PILL BUTTON
+        // 2. SLEEP PILL BUTTON (Offline Hardware, Call, Bluetooth & Internet Mode)
+        val isSleep = currentMode == MokoOperatingMode.SLEEP
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(9.dp))
-                .background(if (!isOnline) SuaCyanDim else Color.Transparent)
-                .clickable {
-                    if (isOnline) {
-                        onSelectSleep()
-                    } else {
-                        onSelectOnline()
-                    }
-                }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .background(if (isSleep) SuaAmber else Color.Transparent)
+                .clickable { onSelectSleep() }
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .testTag("sleep_mode_button"),
             contentAlignment = Alignment.Center
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Bedtime,
-                    contentDescription = "Switch Sleep / Online Mode",
-                    tint = if (!isOnline) SuaTextPrimary else SuaTextSecondary,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "SLEEP",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (!isOnline) SuaTextPrimary else SuaTextSecondary
-                )
-            }
+            Text(
+                text = "SLEEP",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (isSleep) SuaObsidian else SuaTextSecondary
+            )
+        }
+
+        // 3. OFFLINE PILL BUTTON (Complete Background Service & Mic Shutdown)
+        val isOffline = currentMode == MokoOperatingMode.OFFLINE
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(9.dp))
+                .background(if (isOffline) SuaCrimson else Color.Transparent)
+                .clickable { onSelectOffline() }
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .testTag("offline_mode_button"),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "OFFLINE",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (isOffline) SuaTextPrimary else SuaTextSecondary
+            )
         }
     }
 }
@@ -790,12 +842,13 @@ private fun NeonVioletGlassOrbCard(
     assistantName: String,
     userName: String,
     status: SuaStatus,
-    isOnline: Boolean,
+    operatingMode: MokoOperatingMode,
+    wakeRemainingSeconds: Int,
     audioRms: Float,
     liveTranscript: String,
     lastReply: String,
     memoryCount: Int,
-    onToggleOnlineSleep: () -> Unit,
+    onTapOrb: () -> Unit,
     onTestVoice: () -> Unit,
     onQuickCommand: (String) -> Unit
 ) {
@@ -819,11 +872,16 @@ private fun NeonVioletGlassOrbCard(
         label = "orb_glow"
     )
 
+    val isServiceActive = operatingMode != MokoOperatingMode.OFFLINE
+    val isInActive60sSession = isServiceActive && wakeRemainingSeconds > 0
+
     val activeAccentColor = when {
         status == SuaStatus.SPEAKING -> SuaEmerald
         status == SuaStatus.PROCESSING -> SuaAmber
-        isOnline -> SuaCyan
-        else -> SuaElectricBlue
+        operatingMode == MokoOperatingMode.OFFLINE -> SuaCrimson
+        operatingMode == MokoOperatingMode.SLEEP -> if (isInActive60sSession) SuaAmber else SuaCyan
+        isInActive60sSession -> SuaEmerald
+        else -> SuaCyan
     }
 
     val glassCardBrush = remember(activeAccentColor) {
@@ -863,34 +921,46 @@ private fun NeonVioletGlassOrbCard(
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Status Row inside Violet Glass Card
+            // Top Status & 60s Countdown Timer Row inside Violet Glass Card
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // 60-Second Countdown Timer / Standby Badge
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(activeAccentColor.copy(alpha = 0.15f))
+                        .background(activeAccentColor.copy(alpha = 0.16f))
                         .border(
                             1.dp,
-                            activeAccentColor.copy(alpha = 0.65f),
+                            activeAccentColor.copy(alpha = 0.75f),
                             RoundedCornerShape(10.dp)
                         )
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .testTag("wake_countdown_badge")
                 ) {
-                    Text(
-                        text = when {
-                            status == SuaStatus.SPEAKING -> "${assistantName.uppercase()} SPEAKING..."
-                            status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} THINKING..."
-                            isOnline -> "ONLINE • SAY 'OK ${assistantName.uppercase()}'"
-                            else -> "SLEEP MODE • TAP ORB TO WAKE"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = activeAccentColor,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = "60s Conversation Timer",
+                            tint = activeAccentColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = when {
+                                status == SuaStatus.SPEAKING -> "${assistantName.uppercase()} SPEAKING • 60s"
+                                status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} THINKING..."
+                                operatingMode == MokoOperatingMode.OFFLINE -> "OFFLINE • MIC & BG STOPPED"
+                                isInActive60sSession -> "ACTIVE SESSION • ${wakeRemainingSeconds}s (${operatingMode.label})"
+                                else -> "STANDBY • SAY 'HI ${assistantName.uppercase()}'"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = activeAccentColor,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
 
                 Box(
@@ -911,7 +981,7 @@ private fun NeonVioletGlassOrbCard(
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = "KALPA VOICE • $memoryCount MEM",
+                            text = "KALPA • $memoryCount MEM",
                             style = MaterialTheme.typography.labelSmall,
                             color = SuaTextPrimary,
                             fontWeight = FontWeight.Bold
@@ -920,7 +990,7 @@ private fun NeonVioletGlassOrbCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             // DEEP PURPLE & NEON VIOLET GLASS VOICE ORB
             val normalizedRms = ((audioRms + 2f) / 12f).coerceIn(0f, 1f)
@@ -929,7 +999,7 @@ private fun NeonVioletGlassOrbCard(
                 modifier = Modifier
                     .size(200.dp)
                     .clip(CircleShape)
-                    .clickable { onToggleOnlineSleep() }
+                    .clickable { onTapOrb() }
                     .testTag("central_mic_orb"),
                 contentAlignment = Alignment.Center
             ) {
@@ -960,26 +1030,38 @@ private fun NeonVioletGlassOrbCard(
                         style = Stroke(width = 2.dp.toPx())
                     )
 
-                    // Rotating Cyber Violet Arcs
-                    rotate(degrees = ringRotation, pivot = center) {
+                    // 60-Second Countdown Progress Arc around the Orb when in Active Session
+                    if (isInActive60sSession) {
+                        val sweep = (wakeRemainingSeconds.coerceIn(0, 60) / 60f) * 360f
                         drawArc(
-                            color = SuaCyan,
-                            startAngle = 15f,
-                            sweepAngle = 70f,
+                            color = activeAccentColor,
+                            startAngle = -90f,
+                            sweepAngle = sweep,
                             useCenter = false,
-                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                            style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round)
                         )
-                        drawArc(
-                            color = SuaElectricBlue,
-                            startAngle = 195f,
-                            sweepAngle = 70f,
-                            useCenter = false,
-                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
-                        )
+                    } else {
+                        // Rotating Cyber Violet Arcs
+                        rotate(degrees = ringRotation, pivot = center) {
+                            drawArc(
+                                color = SuaCyan,
+                                startAngle = 15f,
+                                sweepAngle = 70f,
+                                useCenter = false,
+                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                            drawArc(
+                                color = SuaElectricBlue,
+                                startAngle = 195f,
+                                sweepAngle = 70f,
+                                useCenter = false,
+                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        }
                     }
 
                     // Dynamic Voice-Reactive Ring
-                    val rmsScale = if (isOnline) (0.72f + normalizedRms * 0.14f) else 0.72f
+                    val rmsScale = if (isServiceActive) (0.72f + normalizedRms * 0.14f) else 0.72f
                     drawCircle(
                         color = activeAccentColor,
                         radius = maxRadius * rmsScale,
@@ -1011,20 +1093,28 @@ private fun NeonVioletGlassOrbCard(
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        imageVector = if (isOnline) Icons.Default.Mic else Icons.Default.MicOff,
-                        contentDescription = if (isOnline) "$assistantName Online" else "$assistantName Sleep Mode",
+                        imageVector = if (isServiceActive) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = operatingMode.label,
                         tint = activeAccentColor,
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(36.dp)
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (isOnline) "ONLINE" else "SLEEP",
+                        text = when {
+                            operatingMode == MokoOperatingMode.OFFLINE -> "OFFLINE"
+                            isInActive60sSession -> "${wakeRemainingSeconds}s"
+                            else -> "STANDBY"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = SuaTextPrimary,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = if (isOnline) "Tap to Sleep" else "Tap to Wake",
+                        text = when {
+                            operatingMode == MokoOperatingMode.OFFLINE -> "Tap to Start Online"
+                            isInActive60sSession -> "${operatingMode.label} • Speak Directly"
+                            else -> "Say 'Hi $assistantName'"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = SuaCyan,
                         fontWeight = FontWeight.Bold
@@ -1034,7 +1124,7 @@ private fun NeonVioletGlassOrbCard(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Quick Action Chips Row (Strictly 100% English UI Labels)
+            // Quick Action Chips Row (Strictly 100% English UI Labels, includes Bluetooth & Internet Offline Controls)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1042,9 +1132,11 @@ private fun NeonVioletGlassOrbCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 QuickGlassChip("Call Contact") { onQuickCommand("Call Khushi") }
+                QuickGlassChip("Bluetooth OFF") { onQuickCommand("Turn off Bluetooth") }
+                QuickGlassChip("Bluetooth ON") { onQuickCommand("Turn on Bluetooth") }
+                QuickGlassChip("Internet OFF") { onQuickCommand("Turn off Internet") }
                 QuickGlassChip("Send SMS") { onQuickCommand("Send SMS to Khushi") }
                 QuickGlassChip("WhatsApp Msg") { onQuickCommand("Send WhatsApp message to Khushi") }
-                QuickGlassChip("Speak Both Numbers") { onQuickCommand("Speak both numbers") }
                 QuickGlassChip("Flashlight") { onQuickCommand("Turn on flashlight") }
                 QuickGlassChip("Who Developed You?") { onQuickCommand("Who developed you?") }
             }
@@ -1073,9 +1165,17 @@ private fun NeonVioletGlassOrbCard(
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = "HINDI & ENGLISH VOICE READY",
+                        text = when (operatingMode) {
+                            MokoOperatingMode.ONLINE -> "ONLINE • AI + HARDWARE"
+                            MokoOperatingMode.SLEEP -> "SLEEP • OFFLINE HARDWARE ONLY"
+                            MokoOperatingMode.OFFLINE -> "OFFLINE • BACKGROUND OFF"
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = SuaEmerald,
+                        color = when (operatingMode) {
+                            MokoOperatingMode.ONLINE -> SuaEmerald
+                            MokoOperatingMode.SLEEP -> SuaAmber
+                            MokoOperatingMode.OFFLINE -> SuaCrimson
+                        },
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -1111,7 +1211,8 @@ private fun NeonVioletGlassOrbCard(
 private fun MokoSideDrawerContent(
     assistantName: String,
     userName: String,
-    isOnline: Boolean,
+    operatingMode: MokoOperatingMode,
+    wakeRemainingSeconds: Int,
     hasApiKey: Boolean,
     batteryPercent: Int,
     isFlashlightOn: Boolean,
@@ -1124,6 +1225,7 @@ private fun MokoSideDrawerContent(
     onOpenFullSettings: () -> Unit,
     onSwitchToOnline: () -> Unit,
     onSwitchToSleep: () -> Unit,
+    onSwitchToOffline: () -> Unit,
     onToggleFlashlight: () -> Unit,
     onLockPhone: () -> Unit,
     onBrightnessChange: (Int) -> Unit,
@@ -1192,14 +1294,14 @@ private fun MokoSideDrawerContent(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Active User: $userName",
+                    text = "Active User: $userName • Mode: ${operatingMode.label}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = SuaTextPrimary,
                     fontWeight = FontWeight.Bold
                 )
             }
             Text(
-                text = "Wake-Word: \"Ok $assistantName\" / \"Hi $assistantName\" • Battery: $batteryPercent%",
+                text = "Wake-Word: \"Hi $assistantName\" (60s Timer: ${wakeRemainingSeconds}s) • Battery: $batteryPercent%",
                 style = MaterialTheme.typography.labelSmall,
                 color = SuaTextSecondary
             )
@@ -1227,51 +1329,74 @@ private fun MokoSideDrawerContent(
             )
         }
 
-        // Online vs Sleep Mode Buttons
+        // 3-Mode System Buttons: ONLINE vs SLEEP vs OFFLINE
+        Text(
+            text = "SYSTEM OPERATING MODE (ONLINE / SLEEP / OFFLINE)",
+            style = MaterialTheme.typography.labelSmall,
+            color = SuaCyan,
+            fontWeight = FontWeight.ExtraBold
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = onSwitchToOnline,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .height(46.dp),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isOnline) SuaEmerald else SuaSurfaceCard,
-                    contentColor = if (isOnline) SuaObsidian else SuaTextPrimary
+                    containerColor = if (operatingMode == MokoOperatingMode.ONLINE) SuaEmerald else SuaSurfaceCard,
+                    contentColor = if (operatingMode == MokoOperatingMode.ONLINE) SuaObsidian else SuaTextPrimary
                 )
             ) {
-                Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("ONLINE", fontWeight = FontWeight.ExtraBold)
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("ONLINE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
             }
 
             Button(
-                onClick = {
-                    if (isOnline) onSwitchToSleep() else onSwitchToOnline()
-                },
+                onClick = onSwitchToSleep,
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp),
+                    .height(46.dp),
                 shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (!isOnline) SuaCyanDim else SuaSurfaceCard,
+                    containerColor = if (operatingMode == MokoOperatingMode.SLEEP) SuaAmber else SuaSurfaceCard,
+                    contentColor = if (operatingMode == MokoOperatingMode.SLEEP) SuaObsidian else SuaTextPrimary
+                )
+            ) {
+                Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("SLEEP", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+            }
+
+            Button(
+                onClick = onSwitchToOffline,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 4.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (operatingMode == MokoOperatingMode.OFFLINE) SuaCrimson else SuaSurfaceCard,
                     contentColor = SuaTextPrimary
                 )
             ) {
-                Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isOnline) "SLEEP" else "WAKE", fontWeight = FontWeight.ExtraBold)
+                Icon(Icons.Default.MicOff, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("OFFLINE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
             }
         }
 
         HorizontalDivider(color = SuaBorder)
 
-        // Hardware Controls
+        // Hardware Controls (Works in both ONLINE & SLEEP Modes)
         Text(
-            text = "HARDWARE CONTROLS",
+            text = "OFFLINE & HARDWARE CONTROLS",
             style = MaterialTheme.typography.labelMedium,
             color = SuaCyan,
             fontWeight = FontWeight.ExtraBold
@@ -1321,6 +1446,43 @@ private fun MokoSideDrawerContent(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "LOCK",
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = { onExecuteCommand("Turn off Bluetooth") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan)
+            ) {
+                Text(
+                    text = "BLUETOOTH OFF",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            OutlinedButton(
+                onClick = { onExecuteCommand("Turn off Internet") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaAmber)
+            ) {
+                Text(
+                    text = "INTERNET OFF",
+                    style = MaterialTheme.typography.labelSmall,
                     color = SuaTextPrimary,
                     fontWeight = FontWeight.Bold
                 )

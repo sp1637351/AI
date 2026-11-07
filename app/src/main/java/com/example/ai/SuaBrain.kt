@@ -4,6 +4,7 @@ import com.example.control.SuaDeviceController
 import com.example.data.AiProviderType
 import com.example.data.ConfirmationStep
 import com.example.data.DeviceActionType
+import com.example.data.MokoOperatingMode
 import com.example.data.ParsedCommand
 import com.example.data.PendingCommsConfirmation
 import com.example.data.SuaPreferences
@@ -110,7 +111,24 @@ class SuaBrain(
             return@withContext initiateInteractiveCommsFlow(localMatch, text, userName, assistantName, speakEn)
         }
 
-        // 4. For open-ended queries or complex CALL/SMS/WhatsApp phrasing: call the active AI Provider
+        // In SLEEP MODE: Only offline hardware, Call, SMS, WhatsApp, Bluetooth, Internet & App commands run (no open AI Q&A!)
+        val isSleepHardwareOnlyMode = SuaStateRepository.operatingMode.value == MokoOperatingMode.SLEEP
+        if (isSleepHardwareOnlyMode) {
+            if (localMatch != null) {
+                return@withContext initiateInteractiveCommsFlow(localMatch, text, userName, assistantName, speakEn)
+            }
+            return@withContext ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName SLEEP MODE (OFFLINE HARDWARE ONLY) // Open AI Q&A is disabled in Sleep Mode. Hardware controls (Call, Bluetooth, Internet, Torch, Lock, Volume, Brightness, Apps) are active. Tap ONLINE for AI Q&A.",
+                spokenReply = if (speakEn) {
+                    "Yes $userName, I am currently in Sleep Mode where offline commands like Calling, Bluetooth, Internet, Flashlight, and Volume work. Switch to Online Mode for open AI questions."
+                } else {
+                    "जी $userName, अभी मैं स्लीप मोड में हूँ। इस मोड में बिना इंटरनेट वाले काम जैसे कॉल करना, ब्लूटूथ ऑफ करना, इंटरनेट बंद करना और फोन कंट्रोल काम करते हैं। सवाल-जवाब के लिए ऑनलाइन मोड चालू करें।"
+                }
+            )
+        }
+
+        // 4. For open-ended queries in ONLINE mode: call the active AI Provider
         var lastApiFailure: AiCallOutcome.Failure? = null
         if (apiKey.isNotEmpty() || customUrl.isNotEmpty()) {
             when (val outcome = callActiveAiProvider(text, apiKey, customUrl, userName, assistantName, speakEn)) {
@@ -899,7 +917,75 @@ class SuaBrain(
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
-        // 1. FLASHLIGHT OFF / ON
+        // 0. VOICE MODE SWITCH ("स्लीप मोड में जाओ", "ऑनलाइन हो जाओ", "ऑफलाइन हो जाओ", "Switch to sleep mode", "Go offline")
+        val asksSleepMode = lower.contains("sleep mode") || text.contains("स्लीप मोड")
+        val asksOfflineMode = lower.contains("offline mode") || lower.contains("go offline") ||
+            text.contains("ऑफलाइन मोड") || text.contains("ऑफलाइन हो जाओ")
+        val asksOnlineMode = lower.contains("online mode") || lower.contains("go online") ||
+            text.contains("ऑनलाइन मोड") || text.contains("ऑनलाइन हो जाओ")
+        if (asksSleepMode || asksOfflineMode || asksOnlineMode) {
+            val targetMode = when {
+                asksOfflineMode -> "OFFLINE"
+                asksSleepMode -> "SLEEP"
+                else -> "ONLINE"
+            }
+            return ParsedCommand(
+                action = DeviceActionType.SWITCH_MODE,
+                target = targetMode,
+                displayReply = "$assistantName MODE // Switched to $targetMode mode.",
+                spokenReply = when (targetMode) {
+                    "SLEEP" -> if (speakEn) "Switching to Sleep Mode, $userName. Offline hardware and calling commands are active." else "जी $userName, अब मैं स्लीप मोड में हूँ। बिना इंटरनेट वाले फोन कंट्रोल और कॉल काम करेंगे।"
+                    "OFFLINE" -> if (speakEn) "Going completely offline now, $userName. Background microphone stopped." else "जी $userName, अब मैं पूरी तरह ऑफलाइन हो रही हूँ।"
+                    else -> if (speakEn) "Switching to Online Mode, $userName." else "जी $userName, अब मैं ऑनलाइन मोड में हूँ।"
+                }
+            )
+        }
+
+        // 1. BLUETOOTH ON / OFF ("ब्लूटूथ ऑफ करो", "Turn off Bluetooth", "Bluetooth chalu karo")
+        val hasBluetoothWord = lower.contains("bluetooth") || text.contains("ब्लूटूथ")
+        if (hasBluetoothWord) {
+            val isBtOff = Regex("\\b(off|band|disable|stop|close)\\b").containsMatchIn(lower) ||
+                text.contains("बंद") || text.contains("ऑफ") || text.contains("हटा")
+            return if (isBtOff) {
+                ParsedCommand(
+                    action = DeviceActionType.BLUETOOTH_OFF,
+                    displayReply = "$assistantName BLUETOOTH // Turning Bluetooth OFF.",
+                    spokenReply = if (speakEn) "Turning off Bluetooth, $userName." else "जी $userName, ब्लूटूथ बंद किया जा रहा है।"
+                )
+            } else {
+                ParsedCommand(
+                    action = DeviceActionType.BLUETOOTH_ON,
+                    displayReply = "$assistantName BLUETOOTH // Turning Bluetooth ON.",
+                    spokenReply = if (speakEn) "Turning on Bluetooth, $userName." else "जी $userName, ब्लूटूथ चालू किया जा रहा है।"
+                )
+            }
+        }
+
+        // 2. INTERNET / WI-FI / MOBILE DATA ON / OFF ("इंटरनेट बंद करो", "Wi-Fi off karo", "Turn off internet")
+        val hasInternetWord = lower.contains("internet") || lower.contains("wifi") || lower.contains("wi-fi") ||
+            lower.contains("mobile data") || lower.contains("net band") || lower.contains("net chalu") ||
+            lower.contains("data band") || lower.contains("data on") || lower.contains("data off") ||
+            text.contains("इंटरनेट") || text.contains("वाई-फाई") || text.contains("वाईफाई") ||
+            text.contains("नेट बंद") || text.contains("नेट चालू") || text.contains("डेटा बंद") || text.contains("डेटा चालू")
+        if (hasInternetWord) {
+            val isNetOff = Regex("\\b(off|band|disable|stop|close)\\b").containsMatchIn(lower) ||
+                text.contains("बंद") || text.contains("ऑफ")
+            return if (isNetOff) {
+                ParsedCommand(
+                    action = DeviceActionType.INTERNET_OFF,
+                    displayReply = "$assistantName CONNECTIVITY // Turning Internet / Wi-Fi OFF.",
+                    spokenReply = if (speakEn) "Opening Internet and Wi-Fi controls to turn it off, $userName." else "जी $userName, इंटरनेट और वाई-फाई बंद किया जा रहा है।"
+                )
+            } else {
+                ParsedCommand(
+                    action = DeviceActionType.INTERNET_ON,
+                    displayReply = "$assistantName CONNECTIVITY // Turning Internet / Wi-Fi ON.",
+                    spokenReply = if (speakEn) "Turning on Internet and Wi-Fi, $userName." else "जी $userName, इंटरनेट और वाई-फाई चालू किया जा रहा है।"
+                )
+            }
+        }
+
+        // 3. FLASHLIGHT OFF / ON
         val hasExplicitTorch = lower.contains("flashlight") || lower.contains("flash light") ||
             lower.contains("torch") || text.contains("फ्लैशलाइट") || text.contains("टॉर्च")
         val hasLightWord = (Regex("\\blight\\b").containsMatchIn(lower) || text.contains("लाइट")) &&

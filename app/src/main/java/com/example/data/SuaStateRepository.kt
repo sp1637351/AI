@@ -8,11 +8,19 @@ import java.util.Date
 import java.util.Locale
 
 object SuaStateRepository {
+    const val WAKE_CONVERSATION_WINDOW_MS: Long = 60_000L // 1 full minute (60 seconds)
+
     private val _status = MutableStateFlow(SuaStatus.IDLE)
     val status: StateFlow<SuaStatus> = _status.asStateFlow()
 
+    private val _operatingMode = MutableStateFlow(MokoOperatingMode.OFFLINE)
+    val operatingMode: StateFlow<MokoOperatingMode> = _operatingMode.asStateFlow()
+
     private val _isBackgroundServiceRunning = MutableStateFlow(false)
     val isBackgroundServiceRunning: StateFlow<Boolean> = _isBackgroundServiceRunning.asStateFlow()
+
+    private val _wakeSessionRemainingSeconds = MutableStateFlow(0)
+    val wakeSessionRemainingSeconds: StateFlow<Int> = _wakeSessionRemainingSeconds.asStateFlow()
 
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
@@ -21,7 +29,7 @@ object SuaStateRepository {
     val liveTranscript: StateFlow<String> = _liveTranscript.asStateFlow()
 
     private val _lastSuaReply = MutableStateFlow(
-        "Moko is ready. Switch to ONLINE mode for background & lock-screen listening, or tap SLEEP to pause background mic."
+        "Moko is ready. Select ONLINE for full AI & voice, SLEEP for offline hardware & calls, or OFFLINE to stop background mic."
     )
     val lastSuaReply: StateFlow<String> = _lastSuaReply.asStateFlow()
 
@@ -61,6 +69,18 @@ object SuaStateRepository {
     @Volatile
     var lastWakeSessionTimestampMs: Long = 0L
 
+    fun setOperatingMode(mode: MokoOperatingMode) {
+        _operatingMode.value = mode
+        _isBackgroundServiceRunning.value = (mode != MokoOperatingMode.OFFLINE)
+        if (mode == MokoOperatingMode.OFFLINE) {
+            lastWakeSessionTimestampMs = 0L
+            _wakeSessionRemainingSeconds.value = 0
+            if (_status.value == SuaStatus.LISTENING) {
+                _status.value = SuaStatus.IDLE
+            }
+        }
+    }
+
     fun setPendingComms(pending: PendingCommsConfirmation?) {
         _pendingComms.value = pending
         if (pending != null && pending.phoneNumbers.isNotEmpty()) {
@@ -78,12 +98,50 @@ object SuaStateRepository {
 
     fun markWakeWordDetected() {
         lastWakeSessionTimestampMs = System.currentTimeMillis()
+        _wakeSessionRemainingSeconds.value = 60
     }
 
-    fun isWithinWakeConversationWindow(windowMs: Long = 22_000L): Boolean {
+    fun clearWakeConversationWindow() {
+        lastWakeSessionTimestampMs = 0L
+        _wakeSessionRemainingSeconds.value = 0
+    }
+
+    fun refreshWakeCountdownSeconds(): Int {
+        if (_operatingMode.value == MokoOperatingMode.OFFLINE) {
+            _wakeSessionRemainingSeconds.value = 0
+            return 0
+        }
+        if (_pendingComms.value != null) {
+            lastWakeSessionTimestampMs = System.currentTimeMillis()
+            _wakeSessionRemainingSeconds.value = 60
+            return 60
+        }
+        val ts = lastWakeSessionTimestampMs
+        if (ts <= 0L) {
+            _wakeSessionRemainingSeconds.value = 0
+            return 0
+        }
+        val elapsed = System.currentTimeMillis() - ts
+        if (elapsed >= WAKE_CONVERSATION_WINDOW_MS) {
+            lastWakeSessionTimestampMs = 0L
+            _wakeSessionRemainingSeconds.value = 0
+            return 0
+        }
+        val rem = ((WAKE_CONVERSATION_WINDOW_MS - elapsed + 999L) / 1000L).toInt().coerceIn(0, 60)
+        _wakeSessionRemainingSeconds.value = rem
+        return rem
+    }
+
+    fun isWithinWakeConversationWindow(windowMs: Long = WAKE_CONVERSATION_WINDOW_MS): Boolean {
         if (_pendingComms.value != null) return true
-        val elapsed = System.currentTimeMillis() - lastWakeSessionTimestampMs
-        return lastWakeSessionTimestampMs > 0L && elapsed in 0..windowMs
+        val ts = lastWakeSessionTimestampMs
+        if (ts <= 0L) return false
+        val elapsed = System.currentTimeMillis() - ts
+        val active = elapsed in 0..windowMs
+        if (!active) {
+            _wakeSessionRemainingSeconds.value = 0
+        }
+        return active
     }
 
     fun setAppInForeground(inForeground: Boolean) {
@@ -96,8 +154,15 @@ object SuaStateRepository {
 
     fun setBackgroundServiceRunning(running: Boolean) {
         _isBackgroundServiceRunning.value = running
-        if (!running && _status.value == SuaStatus.LISTENING) {
-            _status.value = SuaStatus.IDLE
+        if (!running) {
+            _operatingMode.value = MokoOperatingMode.OFFLINE
+            lastWakeSessionTimestampMs = 0L
+            _wakeSessionRemainingSeconds.value = 0
+            if (_status.value == SuaStatus.LISTENING) {
+                _status.value = SuaStatus.IDLE
+            }
+        } else if (_operatingMode.value == MokoOperatingMode.OFFLINE) {
+            _operatingMode.value = MokoOperatingMode.ONLINE
         }
     }
 

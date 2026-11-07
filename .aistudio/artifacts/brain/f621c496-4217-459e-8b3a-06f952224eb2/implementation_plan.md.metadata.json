@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for crisp Pitch-Black AMOLED UI, ultra-clean main screen (moving History to Settings), 'Ok Google' style low-battery wake engine, MR. SHASHANK developer identity, customizable User & Assistant names, voice presets & custom commands, and Universal Multi-AI API support (Gemini, ChatGPT, Claude, and Custom URL endpoints).",
-  "updatedAt":  "2026-11-07T10:59:07.500624938Z",
+  "summary":  "Implementation plan for 60-second continuous wake-word conversation with live countdown badge, hands-free auto-standby, and the 3-mode system (ONLINE, SLEEP for offline hardware/Bluetooth/Internet/Call control, and OFFLINE to completely shut down background listening).",
+  "updatedAt":  "2026-11-07T13:15:14.461754865Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
