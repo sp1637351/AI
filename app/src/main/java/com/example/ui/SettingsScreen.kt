@@ -139,7 +139,6 @@ fun SettingsScreen(
     val voicePitch by viewModel.voicePitch.collectAsStateWithLifecycle()
     val voiceSpeed by viewModel.voiceSpeed.collectAsStateWithLifecycle()
     val customCommands by viewModel.customCommands.collectAsStateWithLifecycle()
-    val quickContacts by viewModel.quickContacts.collectAsStateWithLifecycle()
     val commandLogs by viewModel.commandLogs.collectAsStateWithLifecycle()
     val memoryItems by viewModel.memoryItems.collectAsStateWithLifecycle()
     val bannerMessage by viewModel.settingsBannerMessage.collectAsStateWithLifecycle()
@@ -159,10 +158,6 @@ fun SettingsScreen(
 
     var historySubTab by remember { mutableStateOf(0) } // 0 = Chat History, 1 = Memory Vault
     var newMemoryText by remember { mutableStateOf("") }
-
-    var newContactName by remember { mutableStateOf("") }
-    var newContactTag by remember { mutableStateOf("") }
-    var newContactPhone by remember { mutableStateOf("") }
 
     val violetGlassBrush = remember {
         Brush.linearGradient(
@@ -1415,141 +1410,6 @@ fun SettingsScreen(
                                                 }
                                             }
                                         )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // SECTION 7: SPEED DIAL / VOICE CONTACTS
-                    item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
-                            shape = RoundedCornerShape(20.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
-                                    .padding(18.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Text(
-                                    text = "07 // VOICE SPEED-DIAL DIRECTORY",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = SuaTextPrimary,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-
-                                quickContacts.forEach { contact ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(SuaDeepNavy)
-                                            .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Person,
-                                                contentDescription = null,
-                                                tint = SuaCyan,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Column {
-                                                Text(
-                                                    text = contact.name,
-                                                    style = MaterialTheme.typography.bodyLarge,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = SuaTextPrimary
-                                                )
-                                                Text(
-                                                    text = "${contact.aliasTag} • ${contact.phoneNumber}",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = SuaCyan
-                                                )
-                                            }
-                                        }
-                                        IconButton(onClick = { viewModel.removeQuickContact(contact.name) }) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Remove Contact",
-                                                tint = SuaCrimson
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = newContactName,
-                                        onValueChange = { newContactName = it },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("contact_name_input"),
-                                        label = { Text("Name (e.g. Rahul)") },
-                                        singleLine = true,
-                                        colors = violetTextFieldColors()
-                                    )
-                                    OutlinedTextField(
-                                        value = newContactTag,
-                                        onValueChange = { newContactTag = it },
-                                        modifier = Modifier.weight(1f),
-                                        label = { Text("Alias / Nickname") },
-                                        singleLine = true,
-                                        colors = violetTextFieldColors()
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedTextField(
-                                        value = newContactPhone,
-                                        onValueChange = { newContactPhone = it },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("contact_phone_input"),
-                                        label = { Text("Phone Number") },
-                                        singleLine = true,
-                                        colors = violetTextFieldColors()
-                                    )
-
-                                    Button(
-                                        onClick = {
-                                            if (newContactName.isNotBlank() && newContactPhone.isNotBlank()) {
-                                                viewModel.addOrUpdateQuickContact(
-                                                    name = newContactName,
-                                                    aliasTag = newContactTag,
-                                                    phone = newContactPhone
-                                                )
-                                                newContactName = ""
-                                                newContactTag = ""
-                                                newContactPhone = ""
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .height(54.dp)
-                                            .testTag("add_contact_button"),
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = SuaCyan,
-                                            contentColor = SuaObsidian
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "Add Contact")
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("ADD", fontWeight = FontWeight.ExtraBold)
                                     }
                                 }
                             }

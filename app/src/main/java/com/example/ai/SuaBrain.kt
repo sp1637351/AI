@@ -54,6 +54,16 @@ class SuaBrain(
             )
         }
 
+        // 00. Instant STOP / CANCEL Command ("स्टॉप", "रुको", "बस करो", "चुप हो जाओ", "stop", "ruk jao")
+        if (HindiTransliterator.isStopCommand(text, assistantName)) {
+            SuaStateRepository.setPendingComms(null)
+            return@withContext ParsedCommand(
+                action = DeviceActionType.STOP_ACTION,
+                displayReply = "STOPPED // Current task stopped. Listening for your next command...",
+                spokenReply = ""
+            )
+        }
+
         // 0A. Check if there is an active Multi-Step Call / SMS / WhatsApp Confirmation waiting for user reply
         val activePending = SuaStateRepository.pendingComms.value
         if (activePending != null) {
@@ -317,34 +327,51 @@ class SuaBrain(
             )
         } else {
             val singlePhone = allNums.first()
+            // If the user already spoke the message body in their command, send it immediately!
+            if (cmd.message.isNotBlank()) {
+                val chosenLang = detectedLang.ifEmpty { if (speakEn) "ENGLISH" else "HINDI" }
+                val formattedMsg = if (chosenLang == "HINDI") {
+                    HindiTransliterator.toHindiDevanagari(cmd.message)
+                } else {
+                    val hasDevanagari = cmd.message.any { it.code in 0x0900..0x097F }
+                    if (hasDevanagari) {
+                        HindiTransliterator.toRoman(cmd.message).replaceFirstChar { it.uppercase() }
+                    } else {
+                        cmd.message
+                    }
+                }
+                SuaStateRepository.setPendingComms(null)
+                return cmd.copy(
+                    target = singlePhone,
+                    message = formattedMsg,
+                    displayReply = "$assistantName ${cmd.action.label.uppercase()} // Sending to $dispName ($singlePhone): \"$formattedMsg\"",
+                    spokenReply = if (speakEn) {
+                        "Sending your $channelLabelEn to $dispName now."
+                    } else {
+                        "जी $userName, $dispName को $channelLabelHi भेजा जा रहा है।"
+                    }
+                )
+            }
+
             SuaStateRepository.setPendingComms(
                 PendingCommsConfirmation(
                     actionType = cmd.action,
                     contactName = dispName,
                     phoneNumbers = allNums,
                     selectedNumber = singlePhone,
-                    messageBody = cmd.message,
+                    messageBody = "",
                     scriptPreference = detectedLang,
                     step = ConfirmationStep.CONFIRM_AND_DETAILS,
                     preferEnglishReply = speakEn
                 )
             )
-            val msgPreview = if (cmd.message.isNotBlank()) " Message: \"${cmd.message}\"." else ""
             return ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
-                displayReply = "$assistantName ${cmd.action.label.uppercase()} CONFIRM // Recipient: $dispName ($singlePhone).$msgPreview Say 'Hindi' or 'English' and your message (or say 'Speak number').",
+                displayReply = "$assistantName ${cmd.action.label.uppercase()} CONFIRM // Recipient: $dispName ($singlePhone). Speak your message (in Hindi or English).",
                 spokenReply = if (speakEn) {
-                    if (cmd.message.isNotBlank()) {
-                        "Do you want me to send this $channelLabelEn to $dispName? Please tell me if I should type it in Hindi or English, or say 'speak number' to hear their phone number."
-                    } else {
-                        "Do you want to send a $channelLabelEn to $dispName? Tell me whether to type the message in Hindi or English, and what message you want to send."
-                    }
+                    "Do you want to send a $channelLabelEn to $dispName? Tell me whether to type in Hindi or English, and what message you want to send."
                 } else {
-                    if (cmd.message.isNotBlank()) {
-                        "जी $userName, क्या आप $dispName को यह $channelLabelHi भेजना चाहते हैं? बताइए इसे हिंदी में टाइप करके लिखना है या इंग्लिश में?"
-                    } else {
-                        "जी $userName, क्या आप $dispName को $channelLabelHi करना चाहते हैं? बताइए मैसेज हिंदी में टाइप करके लिखना है या इंग्लिश में, और क्या लिखना है?"
-                    }
+                    "जी $userName, क्या आप $dispName को $channelLabelHi करना चाहते हैं? बताइए मैसेज हिंदी में लिखना है या इंग्लिश में, और क्या मैसेज भेजना है?"
                 }
             )
         }
@@ -489,27 +516,10 @@ class SuaBrain(
             )
         }
 
-        if (effectiveLang.isEmpty() && effectiveMessage.isNotBlank()) {
-            SuaStateRepository.setPendingComms(
-                pending.copy(
-                    selectedNumber = chosenPhone,
-                    messageBody = effectiveMessage,
-                    step = ConfirmationStep.CONFIRM_AND_DETAILS
-                )
-            )
-            return ParsedCommand(
-                action = DeviceActionType.AI_CHAT,
-                displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Message ready: \"$effectiveMessage\". Should I write it in Hindi or English?",
-                spokenReply = if (speakEn) {
-                    "Should I write this message to ${pending.contactName} in Hindi script or in English?"
-                } else {
-                    "जी $userName, यह मैसेज हिंदी में टाइप करके लिखना है या इंग्लिश में?"
-                }
-            )
-        }
+        // Once we have the message body, resolve language (explicit choice or default to Hindi/English based on speech) and send immediately!
+        val finalLang = effectiveLang.ifEmpty { if (speakEn) "ENGLISH" else "HINDI" }
 
-        // Both language choice AND message body are ready! Format the message in the requested script and dispatch!
-        val finalFormattedMessage = if (effectiveLang == "HINDI") {
+        val finalFormattedMessage = if (finalLang == "HINDI") {
             HindiTransliterator.toHindiDevanagari(effectiveMessage)
         } else {
             val hasDevanagari = effectiveMessage.any { it.code in 0x0900..0x097F }
@@ -525,11 +535,11 @@ class SuaBrain(
             action = pending.actionType,
             target = chosenPhone,
             message = finalFormattedMessage,
-            displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Sending ($effectiveLang) to ${pending.contactName} ($chosenPhone): \"$finalFormattedMessage\"",
+            displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Sending ($finalLang) to ${pending.contactName} ($chosenPhone): \"$finalFormattedMessage\"",
             spokenReply = if (speakEn) {
-                "Sending your ${pending.actionType.label} in ${effectiveLang.lowercase()} to ${pending.contactName} now."
+                "Sending your ${pending.actionType.label} in ${finalLang.lowercase()} to ${pending.contactName} now."
             } else {
-                "जी $userName, ${pending.contactName} को ${if (effectiveLang == "HINDI") "हिंदी" else "इंग्लिश"} में मैसेज भेजा जा रहा है।"
+                "जी $userName, ${pending.contactName} को ${if (finalLang == "HINDI") "हिंदी" else "इंग्लिश"} में मैसेज भेजा जा रहा है।"
             }
         )
     }
@@ -921,6 +931,16 @@ class SuaBrain(
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
+        // 00. Instant STOP / CANCEL Command ("स्टॉप", "रुको", "बस करो", "stop")
+        if (HindiTransliterator.isStopCommand(text, assistantName)) {
+            SuaStateRepository.setPendingComms(null)
+            return ParsedCommand(
+                action = DeviceActionType.STOP_ACTION,
+                displayReply = "STOPPED // Current task stopped. Listening for your next command...",
+                spokenReply = ""
+            )
+        }
+
         // 0A. SCREEN SHARE & SCREEN ANALYSIS ("स्क्रीन शेयर करो", "स्क्रीन देखो", "स्क्रीन एनालाइज करो", "Share screen", "Analyze screen")
         val hasScreenShareIntent = lower.contains("screen share") || lower.contains("share screen") ||
             lower.contains("analyze screen") || lower.contains("analyse screen") ||
@@ -1271,11 +1291,40 @@ class SuaBrain(
             }
         }
 
-        // 5. MUSIC / MEDIA
+        // 5A. YOUTUBE MUSIC / SONG / VIDEO PLAYBACK ("यूट्यूब पर म्यूजिक चलाओ", "यूट्यूब पर गाना बजाओ", "Play music on YouTube", "म्यूजिक चलाओ", "गाना बजाओ")
+        val hasYouTubeWord = lower.contains("youtube") || lower.contains("you tube") || lower.contains("utube") ||
+            text.contains("यूट्यूब") || text.contains("यू ट्यूब") || text.contains("युटुब") || text.contains("यूटुब")
         val hasMusicWord = lower.contains("music") || lower.contains("song") || lower.contains("gana") ||
             lower.contains("gaana") || text.contains("म्यूजिक") || text.contains("गाना") ||
-            text.contains("सॉन्ग") || lower.contains("next track") || lower.contains("previous track") ||
+            text.contains("सॉन्ग") || text.contains("गीत") || text.contains("भजन") ||
+            lower.contains("next track") || lower.contains("previous track") ||
             lower.contains("play music") || lower.contains("pause music")
+        val hasPlayVerb = lower.contains("play") || lower.contains("chalao") || lower.contains("chala") ||
+            lower.contains("bajao") || lower.contains("baja") || lower.contains("lagao") ||
+            lower.contains("sunao") ||
+            text.contains("चलाओ") || text.contains("चला दो") || text.contains("बजाओ") ||
+            text.contains("बजा दो") || text.contains("लगाओ") || text.contains("सुनाओ") ||
+            text.contains("प्ले करो") || text.contains("प्ले")
+        val isPureOpenYouTube = hasYouTubeWord && !hasMusicWord && !hasPlayVerb &&
+            (lower.contains("open") || lower.contains("kholo") || lower.contains("khol") ||
+                text.contains("खोलो") || text.contains("खोल") || text.contains("ओपन"))
+
+        if (hasYouTubeWord && !isPureOpenYouTube && (hasMusicWord || hasPlayVerb || text.contains("पर") || lower.contains("par") || lower.contains("on"))) {
+            val songQuery = extractYouTubeSongQuery(text)
+            val displaySong = sanitizeForHud(songQuery)
+            return ParsedCommand(
+                action = DeviceActionType.PLAY_YOUTUBE,
+                target = songQuery,
+                displayReply = "$assistantName YOUTUBE // Playing on YouTube: $displaySong",
+                spokenReply = if (speakEn) {
+                    "Playing $displaySong on YouTube for you, $userName."
+                } else {
+                    "जी $userName, यूट्यूब पर $songQuery चलाया जा रहा है।"
+                }
+            )
+        }
+
+        // 5B. MUSIC / MEDIA
         if (hasMusicWord) {
             val isStop = lower.contains("stop") || lower.contains("pause") || lower.contains("band") ||
                 lower.contains("roko") || text.contains("बंद") || text.contains("रोको") || text.contains("पॉज")
@@ -1297,11 +1346,16 @@ class SuaBrain(
                     displayReply = "$assistantName MEDIA // Music playback paused.",
                     spokenReply = if (speakEn) "Music playback paused, $userName." else "जी $userName, म्यूजिक रोक दिया गया है।"
                 )
-                else -> ParsedCommand(
-                    action = DeviceActionType.MEDIA_PLAY,
-                    displayReply = "$assistantName MEDIA // Starting music playback.",
-                    spokenReply = if (speakEn) "Starting music playback, $userName." else "जी $userName, म्यूजिक चालू किया जा रहा है।"
-                )
+                else -> {
+                    val songQuery = extractYouTubeSongQuery(text)
+                    val displaySong = sanitizeForHud(songQuery)
+                    ParsedCommand(
+                        action = DeviceActionType.PLAY_YOUTUBE,
+                        target = songQuery,
+                        displayReply = "$assistantName YOUTUBE MUSIC // Playing: $displaySong",
+                        spokenReply = if (speakEn) "Playing $displaySong on YouTube, $userName." else "जी $userName, यूट्यूब पर $songQuery चलाया जा रहा है।"
+                    )
+                }
             }
         }
 
@@ -1314,12 +1368,19 @@ class SuaBrain(
             )
         }
 
-        // 7. WHATSAPP MESSAGE ("WhatsApp पर राहुल को मैसेज करो", "Send WhatsApp message to Rahul")
-        val hasWhatsAppWord = lower.contains("whatsapp") || text.contains("व्हाट्सएप") ||
-            text.contains("वाट्सएप") || text.contains("व्हाट्सऐप")
-        val hasMessageIntent = Regex("\\b(message|sms|msg|text|send|bhejo|karo|likho)\\b").containsMatchIn(lower) ||
-            text.contains("मैसेज") || text.contains("संदेश") || text.contains("भेजो") || text.contains("लिखो")
-        if (hasWhatsAppWord && hasMessageIntent && !lower.startsWith("open whatsapp") && !text.contains("व्हाट्सएप खोलो")) {
+        // 7. WHATSAPP MESSAGE ("WhatsApp पर राहुल को मैसेज करो", "राहुल को व्हाट्सएप पर हेलो भेजो", "Send WhatsApp message to Rahul")
+        val hasWhatsAppWord = lower.contains("whatsapp") || lower.contains("whats app") ||
+            lower.contains("what's app") || lower.contains("watsapp") || lower.contains("whatsap") ||
+            text.contains("व्हाट्सएप") || text.contains("वाट्सएप") || text.contains("व्हाट्सऐप") ||
+            text.contains("वॉट्सऐप") || text.contains("वॉट्सएप") || text.contains("व्हाट्स अप") || text.contains("वाट्स अप")
+        val isJustOpenWhatsApp = hasWhatsAppWord &&
+            (lower.contains("open") || lower.contains("kholo") || lower.contains("khol") ||
+                text.contains("खोलो") || text.contains("खोल") || text.contains("ओपन") || text.contains("चालू करो")) &&
+            !text.contains(" को ") && !Regex("\\b(to|ko)\\b").containsMatchIn(lower)
+        val hasMessageIntent = Regex("\\b(message|sms|msg|text|send|bhejo|likho|ko|to)\\b").containsMatchIn(lower) ||
+            text.contains("मैसेज") || text.contains("संदेश") || text.contains("भेजो") ||
+            text.contains("लिखो") || text.contains(" को ")
+        if (hasWhatsAppWord && hasMessageIntent && !isJustOpenWhatsApp) {
             val targetName = extractTargetNameForCallOrSms(text)
             val msgContent = extractMessageBody(text)
             if (targetName.isNotEmpty()) {
@@ -1429,11 +1490,34 @@ class SuaBrain(
         return null
     }
 
+    private fun extractYouTubeSongQuery(text: String): String {
+        var cleaned = text.trim()
+        val stripPatterns = listOf(
+            Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|moko|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|मोको)[,\\s]*"),
+            Regex("(?i)\\b(youtube\\s+par|youtube\\s+pe|on\\s+youtube|in\\s+youtube|youtube|you\\s+tube|utube)\\b"),
+            Regex("(यूट्यूब\\s+पर|यूट्यूब\\s+पे|यू\\s+ट्यूब\\s+पर|यूट्यूब|यू\\s+ट्यूब|युटुब|यूटुब)"),
+            Regex("(?i)\\b(play|start|chalao|chala\\s+do|bajao|baja\\s+do|lagao|laga\\s+do|sunao|karo|kar\\s+do|please|jara)\\b"),
+            Regex("(चलाओ|चला\\s+दो|बजाओ|बजा\\s+दो|लगाओ|लगा\\s+दो|सुनाओ|प्ले\\s+करो|प्ले|चालू\\s+करो|चालू|करो|कर\\s+दो|जरा|प्लीज)")
+        )
+        for (p in stripPatterns) {
+            cleaned = cleaned.replace(p, " ").trim()
+        }
+        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+        val genericWords = setOf(
+            "", "music", "song", "songs", "gana", "gaana", "कोई गाना", "गाना", "म्यूजिक", "सॉन्ग", "गीत"
+        )
+        return if (cleaned.lowercase() in genericWords || cleaned.length < 2) {
+            "Latest Hindi Hit Songs"
+        } else {
+            cleaned
+        }
+    }
+
     private fun extractAppToOpen(text: String): String? {
         val lower = text.lowercase()
         val knownApps = listOf(
-            "whatsapp" to listOf("whatsapp", "व्हाट्सएप", "वाट्सएप", "व्हाट्सऐप"),
-            "youtube" to listOf("youtube", "यूट्यूब", "यू ट्यूब"),
+            "whatsapp" to listOf("whatsapp", "whats app", "what's app", "watsapp", "whatsap", "व्हाट्सएप", "वाट्सएप", "व्हाट्सऐप", "वॉट्सऐप", "वॉट्सएप", "व्हाट्स अप"),
+            "youtube" to listOf("youtube", "you tube", "utube", "यूट्यूब", "यू ट्यूब", "युटुब", "यूटुब"),
             "instagram" to listOf("instagram", "इंस्टाग्राम", "इंस्टा", "insta"),
             "camera" to listOf("camera", "कैमरा", "फोटो खींचो"),
             "chrome" to listOf("chrome", "क्रोम", "browser", "ब्राउज़र"),
@@ -1467,7 +1551,7 @@ class SuaBrain(
                 }
             }
 
-            val hiMatch = Regex("([\\p{L}a-zA-Z0-9]+)\\s+(?:ऐप\\s+|app\\s+)?(?:खोलो|खोल दो|चालू करो|kholo|khol do|open karo)", RegexOption.IGNORE_CASE).find(text)
+            val hiMatch = Regex("([\\p{L}\\p{M}a-zA-Z0-9]+)\\s+(?:ऐप\\s+|app\\s+)?(?:खोलो|खोल दो|चालू करो|kholo|khol do|open karo)", RegexOption.IGNORE_CASE).find(text)
             if (hiMatch != null) {
                 val rawApp = hiMatch.groupValues[1].trim()
                 val romanApp = HindiTransliterator.toRoman(rawApp).replaceFirstChar { it.uppercase() }
@@ -1531,7 +1615,12 @@ class SuaBrain(
             return phoneMatch.value.replace(Regex("[^0-9+]"), "")
         }
 
-        val koMatch = Regex("([\\p{L}\\s]+?)\\s+को\\s+(?:व्हाट्सएप\\s+पर\\s+|whatsapp\\s+par\\s+)?(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|व्हाट्सएप|call|phone|message|sms|whatsapp)").find(text)
+        val spokenDigits = HindiTransliterator.extractSpokenDigits(text)
+        if (spokenDigits.length >= 10) {
+            return spokenDigits
+        }
+
+        val koMatch = Regex("([\\p{L}\\p{M}\\s]+?)\\s+को\\s+(?:व्हाट्सएप\\s+पर\\s+|वाट्सएप\\s+पर\\s+|वॉट्सऐप\\s+पर\\s+|whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|व्हाट्सएप|वाट्सएप|call|phone|message|sms|whatsapp)").find(text)
         if (koMatch != null) {
             val candidate = cleanExtractedContactName(koMatch.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
@@ -1544,21 +1633,21 @@ class SuaBrain(
         }
 
         val hinglishKo =
-            Regex("(?i)(?:mera\\s+|meri\\s+|moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+|ok\\s+moko\\s+|whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?(?:call|phone|fone|message|sms|msg|whatsapp)").find(text)
+            Regex("(?i)(?:mera\\s+|meri\\s+|moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+|ok\\s+moko\\s+|whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?([a-zA-Z\\p{L}\\p{M}]+(?:\\s+[a-zA-Z\\p{L}\\p{M}]+)?)\\s+ko\\s+(?:whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?(?:call|phone|fone|message|sms|msg|whatsapp|bhejo|likho|karo)").find(text)
         if (hinglishKo != null) {
             val candidate = cleanExtractedContactName(hinglishKo.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
         }
 
         val englishWhatsApp =
-            Regex("(?i)(?:send\\s+)?(?:a\\s+)?whatsapp\\s+(?:message\\s+)?to\\s+([a-zA-Z\\p{L}]+)").find(text)
+            Regex("(?i)(?:send\\s+)?(?:a\\s+)?whatsapp\\s+(?:message\\s+)?to\\s+([a-zA-Z\\p{L}\\p{M}]+)").find(text)
         if (englishWhatsApp != null) {
             val candidate = cleanExtractedContactName(englishWhatsApp.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
         }
 
         val englishCall =
-            Regex("(?i)(?:call|dial|phone|message|sms|text|whatsapp)\\s+(?:to\\s+)?([a-zA-Z\\p{L}]+)").find(text)
+            Regex("(?i)(?:call|dial|phone|message|sms|text|whatsapp)\\s+(?:to\\s+)?([a-zA-Z\\p{L}\\p{M}]+)").find(text)
         if (englishCall != null) {
             val candidate = cleanExtractedContactName(englishCall.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
@@ -1570,10 +1659,10 @@ class SuaBrain(
     private fun cleanExtractedContactName(raw: String): String {
         return raw.trim()
             .replace(
-                Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|suno\\s+moko|moko|moco|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|सुनो\\s+मोको|मोको|व्हाट्सएप\\s+पर|व्हाट्सएप\\s+पे|whatsapp\\s+par|whatsapp\\s+pe|whatsapp|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"),
+                Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|suno\\s+moko|moko|moco|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|सुनो\\s+मोको|मोको|व्हाट्सएप\\s+पर|वाट्सएप\\s+पर|वॉट्सऐप\\s+पर|व्हाट्सएप\\s+पे|whatsapp\\s+par|whatsapp\\s+pe|whatsapp|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"),
                 ""
             )
-            .replace(Regex("(?i)\\s+(को|ko|पे|पर|par|on\\s+whatsapp|व्हाट्सएप\\s+पर)$"), "")
+            .replace(Regex("(?i)\\s+(को|ko|पे|पर|par|on\\s+whatsapp|व्हाट्सएप\\s+पर|वाट्सएप\\s+पर)$"), "")
             .trim()
     }
 
@@ -1589,6 +1678,16 @@ class SuaBrain(
         val englishSaying = Regex("(?i)(?:saying|that)\\s+(.+)$").find(text)
         if (englishSaying != null) {
             return englishSaying.groupValues[1].trim()
+        }
+        // Direct pattern: "राहुल को व्हाट्सएप पर हेलो भेजो" or "Rahul ko whatsapp par hello bhejo"
+        val directMsgHi = Regex("(?:व्हाट्सएप\\s+पर|वाट्सएप\\s+पर|वॉट्सऐप\\s+पर|whatsapp\\s+par|whatsapp\\s+pe)\\s+(.+?)\\s+(?:भेजो|लिखो|मैसेज\\s+करो|सेंड\\s+करो|bhejo|likho|send\\s+karo)$", RegexOption.IGNORE_CASE).find(text)
+        if (directMsgHi != null) {
+            val candidate = directMsgHi.groupValues[1].trim()
+            if (candidate.isNotEmpty() && !candidate.endsWith(" को") && !candidate.lowercase().endsWith(" ko") &&
+                candidate !in listOf("मैसेज", "संदेश", "message", "msg")
+            ) {
+                return candidate
+            }
         }
         return ""
     }
@@ -1636,8 +1735,8 @@ class SuaBrain(
             $screenContextBlock
             6. Return ONLY a valid JSON object matching this exact schema:
             {
-              "action": "CALL" | "SMS" | "WHATSAPP_MSG" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "BLUETOOTH_ON" | "BLUETOOTH_OFF" | "INTERNET_ON" | "INTERNET_OFF" | "LOCK_PHONE" | "UNLOCK_PHONE" | "SCREEN_SHARE_ANALYZE" | "VOICE_CLICK" | "OPEN_SYSTEM_SETTING" | "RINGER_MODE_SET" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
-              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS/WHATSAPP_MSG, or App/Button/Setting name if OPEN_APP/VOICE_CLICK/OPEN_SYSTEM_SETTING, otherwise empty string",
+              "action": "CALL" | "SMS" | "WHATSAPP_MSG" | "PLAY_YOUTUBE" | "STOP_ACTION" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "BLUETOOTH_ON" | "BLUETOOTH_OFF" | "INTERNET_ON" | "INTERNET_OFF" | "LOCK_PHONE" | "UNLOCK_PHONE" | "SCREEN_SHARE_ANALYZE" | "VOICE_CLICK" | "OPEN_SYSTEM_SETTING" | "RINGER_MODE_SET" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
+              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS/WHATSAPP_MSG, song/music search query if PLAY_YOUTUBE, or App/Button/Setting name if OPEN_APP/VOICE_CLICK/OPEN_SYSTEM_SETTING, otherwise empty string",
               "message": "Message text content if action is SMS or WHATSAPP_MSG, otherwise empty string",
               "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm 24h hour, or -1 if not applicable),
               "secondaryNumericValue": integer (0-59 for alarm minutes, default 0),

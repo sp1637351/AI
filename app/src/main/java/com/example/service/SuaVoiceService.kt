@@ -128,6 +128,7 @@ class SuaVoiceService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var countdownTickerJob: Job? = null
+    private var activeCommandJob: Job? = null
 
     private lateinit var prefs: SuaPreferences
     private lateinit var brain: SuaBrain
@@ -137,6 +138,7 @@ class SuaVoiceService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var shouldKeepListening = false
     private var isCurrentlyListening = false
+    private var lastListenStartMs = 0L
 
     // Keeps Moko's voice recognizer alive when the user locks the phone screen in ONLINE or SLEEP mode
     private val screenStateReceiver = object : BroadcastReceiver() {
@@ -148,7 +150,7 @@ class SuaVoiceService : Service() {
                 Intent.ACTION_SCREEN_ON -> {
                     acquireWakeLock()
                     if (!isCurrentlyListening) {
-                        scheduleNextListen(500L)
+                        scheduleNextListen(350L)
                     }
                 }
             }
@@ -180,6 +182,7 @@ class SuaVoiceService : Service() {
             ACTION_STOP_SERVICE -> {
                 // OFFLINE MODE: Completely stop background listening & release WakeLock
                 shouldKeepListening = false
+                activeCommandJob?.cancel()
                 countdownTickerJob?.cancel()
                 releaseWakeLock()
                 stopListeningInternal()
@@ -234,6 +237,9 @@ class SuaVoiceService : Service() {
         val botName = prefs.getAssistantName()
         val userName = prefs.getUserName()
 
+        // Start permanent microphone listening immediately so the mic is ON right away
+        scheduleNextListen(200L)
+
         if (mode == MokoOperatingMode.SLEEP) {
             val sleepDesc = "Offline Hardware & Call Mode • 60s Active Window (Say 'Hi $botName')"
             SuaStateRepository.updateLiveTranscript("SLEEP MODE // $sleepDesc")
@@ -243,19 +249,19 @@ class SuaVoiceService : Service() {
             SuaVoiceSpeaker.speak("जी $userName, मैं $botName अब स्लीप मोड में हूँ। इसमें सवाल-जवाब बंद रहेंगे, लेकिन आप हाय $botName बोलकर बिना इंटरनेट के कॉल, ब्लूटूथ ऑफ़, इंटरनेट ऑफ़ और फोन के सारे काम करवा सकते हैं।") {
                 if (shouldKeepListening) {
                     SuaStateRepository.markWakeWordDetected()
-                    scheduleNextListen(300L)
+                    scheduleNextListen(200L)
                 }
             }
         } else {
-            val onlineDesc = "60s Continuous Talk Window • Say 'Hi $botName' or 'Ok $botName'"
+            val onlineDesc = "Permanent Active Mic • 60s Talk Window (Say 'Stop' anytime to interrupt)"
             SuaStateRepository.updateLiveTranscript("ONLINE MODE // $onlineDesc")
-            SuaStateRepository.updateLastReply("$botName ONLINE // Full AI + Hardware Control active. Speak continuously for 60s after saying 'Hi $botName'.")
+            SuaStateRepository.updateLastReply("$botName ONLINE // Permanent Mic ON. Speak continuously, say 'Stop' anytime to halt, or 'Hi $botName' after 60s silence.")
             startForegroundWithNotification("ONLINE // $onlineDesc")
 
-            SuaVoiceSpeaker.speak("नमस्ते $userName! मैं $botName ऑनलाइन हो गई हूँ। एक बार हाय $botName बोलने के बाद आप लगातार बात कर सकते हैं, और 1 मिनट तक कोई जवाब न मिलने पर माइक अपने आप स्टैंडबाय में चला जाएगा।") {
+            SuaVoiceSpeaker.speak("नमस्ते $userName! मैं $botName ऑनलाइन हो गई हूँ। माइक ऑन है, आप लगातार बात कर सकते हैं, बीच में स्टॉप बोलकर कोई भी काम रोक सकते हैं, और 1 मिनट तक बात न होने पर हाय $botName बोलकर फिर से एक्टिवेट कर सकते हैं।") {
                 if (shouldKeepListening) {
                     SuaStateRepository.markWakeWordDetected()
-                    scheduleNextListen(300L)
+                    scheduleNextListen(200L)
                 }
             }
         }
@@ -266,8 +272,11 @@ class SuaVoiceService : Service() {
         countdownTickerJob = serviceScope.launch {
             var wasInActiveSession = true
             while (isActive && shouldKeepListening) {
-                // Keep the 60-second timer paused/full while Moko is speaking or waiting on a Call/SMS confirmation
-                if (SuaVoiceSpeaker.isSpeakingNow || SuaStateRepository.pendingComms.value != null) {
+                // Keep the 60-second timer paused/full while Moko is speaking, processing, or waiting on Call/SMS confirmation
+                if (SuaVoiceSpeaker.isSpeakingNow ||
+                    activeCommandJob?.isActive == true ||
+                    SuaStateRepository.pendingComms.value != null
+                ) {
                     SuaStateRepository.markWakeWordDetected()
                 }
                 val remainingSec = SuaStateRepository.refreshWakeCountdownSeconds()
@@ -278,12 +287,34 @@ class SuaVoiceService : Service() {
                     val botName = prefs.getAssistantName()
                     val modeLabel = SuaStateRepository.operatingMode.value.label
                     SuaStateRepository.updateLiveTranscript(
-                        "STANDBY ($modeLabel) // 60s silence reached. Mic in Standby — Say 'Hi $botName' or 'Ok $botName' to wake hands-free."
+                        "STANDBY ($modeLabel) // 60s silence reached. Waiting for 'Hi $botName' or 'Ok $botName'..."
                     )
                     updateNotification("STANDBY ($modeLabel) // Say 'Hi $botName' to wake")
                 }
+
+                // Permanent Mic Watchdog: if the recognizer stopped for >2.4 seconds while in ONLINE/SLEEP mode, re-arm immediately!
+                val now = System.currentTimeMillis()
+                if (shouldKeepListening && !isCurrentlyListening && (now - lastListenStartMs > 2400L)) {
+                    scheduleNextListen(150L)
+                }
+
                 delay(1000L)
             }
+        }
+    }
+
+    private fun handleInstantStopInterruption() {
+        activeCommandJob?.cancel()
+        activeCommandJob = null
+        controller.stopAllActiveOperations()
+        SuaStateRepository.markWakeWordDetected()
+        val botName = prefs.getAssistantName()
+        SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+        SuaStateRepository.updateLiveTranscript("STOPPED // Stopped by voice. Listening for your next command...")
+        SuaStateRepository.updateLastReply("$botName STOPPED // Task & speech stopped immediately. Listening (60s active)...")
+        updateNotification("$botName STOPPED // Listening for next command")
+        if (shouldKeepListening) {
+            scheduleNextListen(220L)
         }
     }
 
@@ -433,22 +464,29 @@ class SuaVoiceService : Service() {
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isCurrentlyListening = true
-            SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+            lastListenStartMs = System.currentTimeMillis()
+            if (!SuaVoiceSpeaker.isSpeakingNow && activeCommandJob?.isActive != true) {
+                SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+            }
             val botName = prefs.getAssistantName()
             val modeLabel = SuaStateRepository.operatingMode.value.label
             val remainingSec = SuaStateRepository.wakeSessionRemainingSeconds.value
             val wakeActive = remainingSec > 0 || SuaStateRepository.pendingComms.value != null
-            SuaStateRepository.updateLiveTranscript(
-                if (wakeActive) {
-                    "$botName $modeLabel (${remainingSec}s) // Speak your command directly..."
-                } else {
-                    "STANDBY ($modeLabel) // Say 'Hi $botName' or 'Ok $botName' to wake..."
-                }
-            )
+            if (!SuaVoiceSpeaker.isSpeakingNow && activeCommandJob?.isActive != true) {
+                SuaStateRepository.updateLiveTranscript(
+                    if (wakeActive) {
+                        "$botName $modeLabel (${remainingSec}s) // Mic ON — Speak command or say 'Stop'..."
+                    } else {
+                        "STANDBY ($modeLabel) // Waiting for 'Hi $botName' or 'Ok $botName'..."
+                    }
+                )
+            }
         }
 
         override fun onBeginningOfSpeech() {
-            SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+            if (!SuaVoiceSpeaker.isSpeakingNow) {
+                SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+            }
         }
 
         override fun onRmsChanged(rmsdB: Float) {
@@ -473,15 +511,15 @@ class SuaVoiceService : Service() {
                 acquireWakeLock()
                 val inActiveSession = SuaStateRepository.isWithinWakeConversationWindow()
                 val baseDelay = when {
-                    inActiveSession -> 750L
-                    prefs.isLowBatteryWakeMode() -> 1500L
-                    else -> 1050L
+                    inActiveSession -> 280L
+                    prefs.isLowBatteryWakeMode() -> 800L
+                    else -> 480L
                 }
                 if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                     error == SpeechRecognizer.ERROR_CLIENT
                 ) {
                     initSpeechRecognizer()
-                    scheduleNextListen(baseDelay + 300L)
+                    scheduleNextListen(baseDelay + 250L)
                 } else {
                     scheduleNextListen(baseDelay)
                 }
@@ -498,21 +536,30 @@ class SuaVoiceService : Service() {
             if (spokenText.isNotEmpty()) {
                 processRecognizedCommand(spokenText, fromMic = true)
             } else if (shouldKeepListening) {
-                val nextDelay = if (SuaStateRepository.isWithinWakeConversationWindow()) 650L else 1200L
+                val nextDelay = if (SuaStateRepository.isWithinWakeConversationWindow()) 250L else 550L
                 scheduleNextListen(nextDelay)
             }
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
             val now = System.currentTimeMillis()
-            if (now - lastPartialUpdateMs < 300L) return
+            if (now - lastPartialUpdateMs < 220L) return
             lastPartialUpdateMs = now
             val partial = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 ?.trim()
                 .orEmpty()
-            if (partial.isNotEmpty() && !SuaVoiceSpeaker.isLikelySelfEcho(partial)) {
+            if (partial.isEmpty()) return
+
+            val botName = prefs.getAssistantName()
+            // Instant voice interruption: if the user says "Stop" / "स्टॉप" / "रुको" while Moko is speaking or working, halt immediately!
+            if (HindiTransliterator.isStopCommand(partial, botName)) {
+                handleInstantStopInterruption()
+                return
+            }
+
+            if (!SuaVoiceSpeaker.isLikelySelfEcho(partial)) {
                 if (SuaStateRepository.isWithinWakeConversationWindow()) {
                     // Actively speaking keeps the 60s conversation session alive
                     SuaStateRepository.markWakeWordDetected()
@@ -527,12 +574,6 @@ class SuaVoiceService : Service() {
     private fun startListeningInternal() {
         mainHandler.post {
             if (!shouldKeepListening) return@post
-
-            // Never open the microphone while TTS speaker is still playing or cooling down!
-            if (SuaVoiceSpeaker.isSpeakingNow || SuaVoiceSpeaker.isInPostSpeechCooldown(800L)) {
-                scheduleNextListen(950L)
-                return@post
-            }
 
             val hasMic = ContextCompat.checkSelfPermission(
                 this,
@@ -549,6 +590,7 @@ class SuaVoiceService : Service() {
             }
 
             try {
+                lastListenStartMs = System.currentTimeMillis()
                 val isSleepOffline = SuaStateRepository.operatingMode.value == MokoOperatingMode.SLEEP
                 val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(
@@ -563,18 +605,22 @@ class SuaVoiceService : Service() {
                     }
                     putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1600L
+                        1800L
                     )
                     putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1200L
+                        1400L
                     )
                 }
                 speechRecognizer?.startListening(recognizerIntent)
-                SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+                isCurrentlyListening = true
+                if (!SuaVoiceSpeaker.isSpeakingNow && activeCommandJob?.isActive != true) {
+                    SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+                }
             } catch (_: Exception) {
+                isCurrentlyListening = false
                 initSpeechRecognizer()
-                scheduleNextListen(1400L)
+                scheduleNextListen(700L)
             }
         }
     }
@@ -601,18 +647,23 @@ class SuaVoiceService : Service() {
     }
 
     private fun processRecognizedCommand(rawSpokenText: String, fromMic: Boolean) {
-        stopListeningInternal()
+        val botName = prefs.getAssistantName()
+        val userName = prefs.getUserName()
 
-        // 1. Acoustic Self-Echo Guard: never process TTS speaker output as a user command!
-        if (fromMic && SuaVoiceSpeaker.isLikelySelfEcho(rawSpokenText)) {
+        // 0. Instant "STOP" / "स्टॉप" / "रुको" command: always processed immediately, even while Moko is speaking or working!
+        if (HindiTransliterator.isStopCommand(rawSpokenText, botName)) {
+            handleInstantStopInterruption()
+            return
+        }
+
+        // 1. Acoustic Self-Echo Guard: ignore Moko's own speaker output, and immediately keep the mic listening!
+        if (fromMic && (SuaVoiceSpeaker.isSpeakingNow || SuaVoiceSpeaker.isLikelySelfEcho(rawSpokenText))) {
             if (shouldKeepListening) {
-                scheduleNextListen(950L)
+                scheduleNextListen(280L)
             }
             return
         }
 
-        val botName = prefs.getAssistantName()
-        val userName = prefs.getUserName()
         val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText, botName)
         val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow() ||
             SuaStateRepository.pendingComms.value != null
@@ -622,10 +673,10 @@ class SuaVoiceService : Service() {
             val ignoredHud = brain.sanitizeForHud(rawSpokenText)
             val modeLabel = SuaStateRepository.operatingMode.value.label
             SuaStateRepository.updateLiveTranscript(
-                "STANDBY ($modeLabel) // Ignored: \"$ignoredHud\" (Say 'Hi $botName' or 'Ok $botName' to wake)"
+                "STANDBY ($modeLabel) // Waiting for 'Hi $botName' (Heard: \"$ignoredHud\")"
             )
             if (shouldKeepListening) {
-                val standbyDelay = if (prefs.isLowBatteryWakeMode()) 1200L else 850L
+                val standbyDelay = if (prefs.isLowBatteryWakeMode()) 650L else 300L
                 scheduleNextListen(standbyDelay)
             }
             return
@@ -633,6 +684,11 @@ class SuaVoiceService : Service() {
 
         // Reset the 1-minute (60s) continuous conversation timer!
         SuaStateRepository.markWakeWordDetected()
+
+        // Immediately re-arm the microphone so the mic stays ON while Moko processes & speaks!
+        if (shouldKeepListening) {
+            scheduleNextListen(300L)
+        }
 
         val effectiveCommand = if (hasWakeWord) strippedAfterWake else rawSpokenText.trim()
 
@@ -650,7 +706,7 @@ class SuaVoiceService : Service() {
             SuaVoiceSpeaker.speak(wakeGreeting) {
                 SuaStateRepository.markWakeWordDetected()
                 if (shouldKeepListening) {
-                    scheduleNextListen(260L)
+                    scheduleNextListen(200L)
                 }
             }
             return
@@ -660,9 +716,18 @@ class SuaVoiceService : Service() {
         SuaStateRepository.updateLiveTranscript(hudTranscript)
         SuaStateRepository.updateStatus(SuaStatus.PROCESSING)
 
-        serviceScope.launch {
+        activeCommandJob?.cancel()
+        activeCommandJob = serviceScope.launch {
             val parsed = brain.interpretCommand(effectiveCommand)
+            if (!isActive) return@launch
+
+            if (parsed.action == DeviceActionType.STOP_ACTION) {
+                handleInstantStopInterruption()
+                return@launch
+            }
+
             val execResult = controller.executeCommand(parsed)
+            if (!isActive) return@launch
 
             // Keep 60-second window open unless switching to OFFLINE mode
             val isSwitchingOffline = parsed.action == DeviceActionType.SWITCH_MODE &&
@@ -682,13 +747,18 @@ class SuaVoiceService : Service() {
             )
             updateNotification(execResult.displayReply)
 
+            // Ensure mic is actively listening while Moko speaks so the user can say "Stop" anytime!
+            if (shouldKeepListening && !isSwitchingOffline) {
+                scheduleNextListen(250L)
+            }
+
             SuaVoiceSpeaker.speak(execResult.finalSpokenReply) {
                 if (isSwitchingOffline || SuaStateRepository.operatingMode.value == MokoOperatingMode.OFFLINE) {
                     stopService(this@SuaVoiceService)
                 } else if (shouldKeepListening) {
                     // Refresh 60s timer right after Moko finishes speaking so the user has a full 1 minute to reply!
                     SuaStateRepository.markWakeWordDetected()
-                    scheduleNextListen(420L)
+                    scheduleNextListen(220L)
                 } else {
                     SuaStateRepository.updateStatus(SuaStatus.IDLE)
                 }

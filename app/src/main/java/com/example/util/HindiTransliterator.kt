@@ -149,10 +149,43 @@ object HindiTransliterator {
     }
 
     /**
-     * Returns true if a spoken contact name (in Hindi or English) matches a saved contact name.
+     * Cleans common Hindi/English filler words from a spoken contact query so real device contacts match cleanly.
+     */
+    fun cleanSpokenContactQuery(raw: String): String {
+        return raw.trim()
+            .replace(
+                Regex(
+                    "(?i)\\b(call|dial|phone|fone|message|sms|msg|whatsapp|send|to|on|par|pe|ko|ka|ki|ke|number|no|please|jara|zara|bhai|bhaiya|didi|ji|sir|boss|कॉल|फोन|फ़ोन|मैसेज|संदेश|व्हाट्सएप|वाट्सएप|को|का|की|के|नंबर|पर|पे|जरा|ज़रा|प्लीज|जी|भाई|भैया|दीदी|लगाओ|लगा|करो|कर|दो|भेजो|बोलो)\\b"
+                ),
+                " "
+            )
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    fun levenshteinDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        val dp = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = dp[0]
+            dp[0] = i
+            for (j in 1..b.length) {
+                val temp = dp[j]
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                dp[j] = minOf(dp[j] + 1, dp[j - 1] + 1, prev + cost)
+                prev = temp
+            }
+        }
+        return dp[b.length]
+    }
+
+    /**
+     * Returns true if a spoken contact name (in Hindi or English) matches a real device contact name.
      */
     fun namesMatch(spokenQuery: String, contactDisplayName: String): Boolean {
-        val qClean = spokenQuery.trim()
+        val qClean = cleanSpokenContactQuery(spokenQuery).ifEmpty { spokenQuery.trim() }
         val cClean = contactDisplayName.trim()
         if (qClean.isEmpty() || cClean.isEmpty()) return false
 
@@ -161,9 +194,9 @@ object HindiTransliterator {
             return true
         }
 
-        // 2. Romanized transliteration match
-        val qRoman = toRoman(qClean).lowercase()
-        val cRoman = toRoman(cClean).lowercase()
+        // 2. Romanized transliteration & fuzzy token match
+        val qRoman = toRoman(qClean).lowercase().replace(Regex("[^a-z0-9\\s]"), "").trim()
+        val cRoman = toRoman(cClean).lowercase().replace(Regex("[^a-z0-9\\s]"), "").trim()
         if (qRoman.length >= 2 && cRoman.length >= 2) {
             if (cRoman.contains(qRoman) || qRoman.contains(cRoman)) {
                 return true
@@ -178,7 +211,14 @@ object HindiTransliterator {
                     }
                     val qSkel = phoneticSkeleton(qt)
                     val cSkel = phoneticSkeleton(ct)
-                    if (qSkel.length >= 2 && qSkel == cSkel) {
+                    if (qSkel.length >= 2 && (qSkel == cSkel || cSkel.startsWith(qSkel) || qSkel.startsWith(cSkel))) {
+                        return true
+                    }
+                    // Fuzzy Levenshtein match for speech recognition variations ("shashank" vs "sashank", "rohit" vs "roheet")
+                    if (qt.length >= 4 && ct.length >= 4 && levenshteinDistance(qt, ct) <= 2) {
+                        return true
+                    }
+                    if (qSkel.length >= 3 && cSkel.length >= 3 && levenshteinDistance(qSkel, cSkel) <= 1) {
                         return true
                     }
                 }
@@ -188,11 +228,64 @@ object HindiTransliterator {
         // 3. Full phonetic skeleton match
         val qSkelFull = phoneticSkeleton(qClean)
         val cSkelFull = phoneticSkeleton(cClean)
-        if (qSkelFull.length >= 2 && (cSkelFull == qSkelFull || cSkelFull.startsWith(qSkelFull))) {
+        if (qSkelFull.length >= 2 && (cSkelFull == qSkelFull || cSkelFull.startsWith(qSkelFull) || qSkelFull.startsWith(cSkelFull))) {
             return true
         }
 
         return false
+    }
+
+    /**
+     * Converts spoken Hindi/English number words into digits if a user dictates a phone number.
+     */
+    fun extractSpokenDigits(input: String): String {
+        val wordToDigit = mapOf(
+            "zero" to "0", "शून्य" to "0", "जीरो" to "0", "ज़ीरो" to "0",
+            "one" to "1", "एक" to "1", "वन" to "1",
+            "two" to "2", "दो" to "2", "टू" to "2",
+            "three" to "3", "तीन" to "3", "थ्री" to "3",
+            "four" to "4", "चार" to "4", "फोर" to "4",
+            "five" to "5", "पांच" to "5", "पाँच" to "5", "फाइव" to "5",
+            "six" to "6", "छह" to "6", "छे" to "6", "सिक्स" to "6",
+            "seven" to "7", "सात" to "7", "सेवन" to "7",
+            "eight" to "8", "आठ" to "8", "एट" to "8",
+            "nine" to "9", "नौ" to "9", "नाइन" to "9"
+        )
+        var replaced = input.lowercase()
+        for ((word, digit) in wordToDigit) {
+            replaced = replaced.replace(word, digit)
+        }
+        return replaced.replace(Regex("[^0-9+]"), "")
+    }
+
+    /**
+     * Detects if the user spoke an immediate "Stop" / "Ruko" / "Chup" interruption command to halt Moko's speech or task.
+     */
+    fun isStopCommand(rawSpoken: String, assistantName: String = "Moko"): Boolean {
+        val trimmed = rawSpoken.trim()
+        if (trimmed.isEmpty()) return false
+        val (_, afterWake) = checkAndStripWakeWord(trimmed, assistantName)
+        val clean = afterWake.ifEmpty { trimmed }.trim().lowercase()
+
+        // Do not confuse hardware turn-off commands ("bluetooth stop", "music stop", "flashlight band") with stopping Moko
+        val hardwareWords = listOf(
+            "bluetooth", "ब्लूटूथ", "internet", "इंटरनेट", "wifi", "वाईफाई", "वाई-फाई",
+            "flashlight", "फ्लैशलाइट", "torch", "टॉर्च", "light", "लाइट",
+            "screen share", "स्क्रीन शेयर", "alarm", "अलार्म"
+        )
+        if (hardwareWords.any { clean.contains(it) }) return false
+
+        val exactStopPhrases = setOf(
+            "stop", "stop it", "stop now", "stop speaking", "stop talking", "stop working",
+            "ruko", "ruk jao", "bas", "bas karo", "chup", "chup ho jao", "shant", "shant ho jao",
+            "cancel", "abort", "quiet", "shut up", "mat bolo", "bolna band karo", "kaam roko",
+            "स्टॉप", "रुको", "रुक जाओ", "बस", "बस करो", "चुप", "चुप हो जाओ",
+            "शांत", "शांत हो जाओ", "कैंसिल", "मत बोलो", "बोलना बंद करो", "काम रोको", "बंद करो"
+        )
+        if (clean in exactStopPhrases) return true
+
+        return Regex("^(stop|ruko|ruk jao|bas karo|chup ho jao|स्टॉप|रुको|रुक जाओ|बस करो|चुप हो जाओ)\\b")
+            .containsMatchIn(clean)
     }
 
     private val wakeWordPatterns = listOf(

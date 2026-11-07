@@ -164,25 +164,6 @@ fun SuaDashboardScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
 
-    // Execute Voice Click UI Navigation actions ("Click Settings", "Click Menu", "Close Menu")
-    LaunchedEffect(pendingUiAction) {
-        when (pendingUiAction) {
-            "OPEN_SETTINGS" -> {
-                viewModel.consumeUiNavigationAction()
-                drawerState.close()
-                onOpenSettings()
-            }
-            "OPEN_DRAWER" -> {
-                viewModel.consumeUiNavigationAction()
-                drawerState.open()
-            }
-            "CLOSE_DRAWER" -> {
-                viewModel.consumeUiNavigationAction()
-                drawerState.close()
-            }
-        }
-    }
-
     val micPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -200,13 +181,41 @@ fun SuaDashboardScreen(
         }
     }
 
+    // Execute Voice Click UI Navigation actions ("Click Settings", "Click Menu", "Close Menu", "REQUEST_PERMISSIONS")
+    LaunchedEffect(pendingUiAction) {
+        when (pendingUiAction) {
+            "OPEN_SETTINGS" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.close()
+                onOpenSettings()
+            }
+            "OPEN_DRAWER" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.open()
+            }
+            "CLOSE_DRAWER" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.close()
+            }
+            "REQUEST_PERMISSIONS" -> {
+                viewModel.consumeUiNavigationAction()
+                micPermLauncher.launch(
+                    viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
+                )
+            }
+        }
+    }
+
     fun requestModeWithMicPermission(targetMode: MokoOperatingMode) {
         if (targetMode == MokoOperatingMode.OFFLINE) {
             viewModel.activateOfflineMode()
             return
         }
         pendingRequestedMode = targetMode
-        if (viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO)) {
+        val hasCorePerms = viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO) &&
+            viewModel.controller.hasPermission(Manifest.permission.READ_CONTACTS) &&
+            viewModel.controller.hasPermission(Manifest.permission.CALL_PHONE)
+        if (hasCorePerms) {
             if (targetMode == MokoOperatingMode.SLEEP) {
                 viewModel.activateSleepMode()
             } else {

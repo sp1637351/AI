@@ -98,6 +98,36 @@ class ExampleRobolectricTest {
         assertEquals(DeviceActionType.RINGER_MODE_SET, silentCmd?.action)
         assertEquals("SILENT", silentCmd?.target)
 
+        // Verify YouTube Music Playback ("यूट्यूब पर म्यूजिक चलाओ", "यूट्यूब पर केसरिया गाना बजाओ")
+        val ytMusicCmd = brain.parseHardwareIntentLocally("यूट्यूब पर म्यूजिक चलाओ")
+        assertNotNull(ytMusicCmd)
+        assertEquals(DeviceActionType.PLAY_YOUTUBE, ytMusicCmd?.action)
+
+        val ytSongCmd = brain.parseHardwareIntentLocally("यूट्यूब पर केसरिया गाना बजाओ")
+        assertNotNull(ytSongCmd)
+        assertEquals(DeviceActionType.PLAY_YOUTUBE, ytSongCmd?.action)
+
+        // Verify Instant Stop Command ("स्टॉप", "रुको", "Stop")
+        val stopCmdHi = brain.parseHardwareIntentLocally("स्टॉप")
+        assertNotNull(stopCmdHi)
+        assertEquals(DeviceActionType.STOP_ACTION, stopCmdHi?.action)
+
+        val stopCmdEn = brain.parseHardwareIntentLocally("Stop")
+        assertNotNull(stopCmdEn)
+        assertEquals(DeviceActionType.STOP_ACTION, stopCmdEn?.action)
+
+        // Verify WhatsApp Open vs WhatsApp Message
+        val openWaCmd = brain.parseHardwareIntentLocally("व्हाट्सएप खोलो")
+        assertNotNull(openWaCmd)
+        assertEquals(DeviceActionType.OPEN_APP, openWaCmd?.action)
+        assertEquals("Whatsapp", openWaCmd?.target)
+
+        val msgWaCmd = brain.parseHardwareIntentLocally("राहुल को व्हाट्सएप पर हेलो भेजो")
+        assertNotNull(msgWaCmd)
+        assertEquals(DeviceActionType.WHATSAPP_MSG, msgWaCmd?.action)
+        assertEquals("राहुल", msgWaCmd?.target)
+        assertEquals("हेलो", msgWaCmd?.message)
+
         SuaStateRepository.setScreenShareActive(true)
         assertTrue(SuaStateRepository.isScreenShareActive.value)
     }
