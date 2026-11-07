@@ -2,19 +2,19 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Deep Purple & Neon Violet Glass Theme Palette for MOKO
-val SuaObsidian = Color(0xFF0B0714)       // Deep Cosmic Violet-Black Background
-val SuaDeepNavy = Color(0xFF130C24)       // Rich Dark Amethyst Surface
-val SuaSurfaceCard = Color(0xFF1A1130)    // Frosted Violet Glass Card
-val SuaSurfaceElevated = Color(0xFF251845) // Elevated Neon Glass Container
+// Pitch-Black AMOLED with Sharp Neon Blue & Pure White Borders (Zero Blur, High Contrast)
+val SuaObsidian = Color(0xFF000000)        // Pure Pitch-Black AMOLED Background
+val SuaDeepNavy = Color(0xFF070B12)        // Crisp Obsidian Header/Bar Surface
+val SuaSurfaceCard = Color(0xFF0D131F)     // High-Contrast Sharp Card Surface
+val SuaSurfaceElevated = Color(0xFF151F30) // Elevated Interactive Button Surface
 
-val SuaCyan = Color(0xFFC084FC)           // Primary Neon Violet Glow
-val SuaCyanDim = Color(0xFF9333EA)        // Deep Electric Purple
-val SuaElectricBlue = Color(0xFFEC4899)   // Electric Magenta / Pink Accent
-val SuaEmerald = Color(0xFF10B981)        // Online Mode Emerald Glow
-val SuaAmber = Color(0xFFF59E0B)          // Standby / Warning Amber
-val SuaCrimson = Color(0xFFEF4444)        // Error / Delete Crimson
+val SuaCyan = Color(0xFF00F0FF)            // Razor-Sharp Electric Neon Cyan-Blue
+val SuaCyanDim = Color(0xFF0091EA)         // Deep Royal Neon Blue
+val SuaElectricBlue = Color(0xFF2979FF)    // Crisp Royal Blue Accent
+val SuaEmerald = Color(0xFF00E676)         // High-Visibility Online Emerald
+val SuaAmber = Color(0xFFFFB300)           // Crisp Warning / Standby Amber
+val SuaCrimson = Color(0xFFFF1744)         // Sharp Alert / Delete Red
 
-val SuaTextPrimary = Color(0xFFF8F5FF)    // Crisp Lavender-White Primary Text
-val SuaTextSecondary = Color(0xFFB6A8D6)  // Soft Muted Violet-Grey Secondary Text
-val SuaBorder = Color(0xFF392663)         // Translucent Violet Glass Border
+val SuaTextPrimary = Color(0xFFFFFFFF)     // Pure Crisp White Text
+val SuaTextSecondary = Color(0xFFB0BEC5)   // Clear Silver-Grey Subtitle Text
+val SuaBorder = Color(0xFF29384D)          // Sharp Crisp Border Line

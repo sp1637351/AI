@@ -1,68 +1,82 @@
-# Moko — Gemini 3 API Fix, Echo-Loop Prevention & Zero-Lag Optimization
+# Moko — Pitch-Black AMOLED UI, Multi-AI API Hub & Custom Voice Engine
 
-Fixes the **HTTP 404 Gemini Model Error** shown in your screenshot, stops the assistant from listening to its own spoken voice (which caused the endless error loop), and removes heavy continuous animations so **Moko** runs smoothly with zero lag.
+Upgrades the application with a **Crisp Pitch-Black AMOLED & Neon Blue UI** (removing all blurry effects), moves **Chat History & Memory Vault into Settings** for a 100% clean main screen, adds **"Ok Google" style low-battery wake listening**, credits **MR. SHASHANK** as the developer, allows customizing **User Name, Assistant Name, Voice Tone & Custom Commands**, and supports **Google Gemini, OpenAI ChatGPT, Claude AI, or any Custom API Link + Key**.
 
 ---
 
-### User Review & Critical Root-Cause Fixes
+### User Review & Confirmed Decisions
 
 > [!IMPORTANT]
-> From your screenshot, we identified and planned fixes for three exact issues:
+> All visual and functional preferences confirmed with you are incorporated below:
 
-1. **Fix 1 — Gemini HTTP 404 Error (`models/gemini-2.5-pro is no longer available to new users`)**:
-   - **Root Cause**: Google's API rejected `gemini-2.5-*` for new projects and explicitly instructed: *"Please update your code to use `models/gemini-3.1-pro-preview`"*.
-   - **Solution**: Upgrade the model engine to **`gemini-3-flash-preview`**, **`gemini-3.1-pro-preview`**, and **`gemini-3.1-flash-lite-preview`**, plus add **Automatic Model Discovery** (`/v1beta/models` lookup + 404 redirect parsing) so Moko automatically uses whichever Gemini 3 model is enabled for your key.
-
-2. **Fix 2 — Stop Moko From Hearing Its Own Voice (Echo Loop Fix)**:
-   - **Root Cause**: In your screenshot (`CMD > "Maph kijie sar gemini sadasy..."`), the microphone turned back on while the speaker was still reading the long error message aloud, causing the app to hear its own voice and trigger an infinite loop.
-   - **Solution**:
-     - Lock out `SpeechRecognizer` while `TextToSpeech` is speaking and wait for a clean **900ms post-speech silence buffer** before re-enabling the mic.
-     - Add an **Acoustic Self-Echo Filter** that ignores any recognized text matching Moko's own recent voice output or system phrases (*"माफ़ कीजिए"*, *"जी बॉस"*).
-     - Keep spoken error messages short and natural in Hindi without reading raw English URLs or HTTP stack traces aloud.
-
-3. **Fix 3 — Eliminate UI & Audio Lag**:
-   - **Root Cause**: Continuous infinite Canvas rotation animations were redrawing every frame at 60 FPS even when idle, competing with `SpeechRecognizer` and `TextToSpeech` on the main thread.
-   - **Solution**: Pause orb animations when in Sleep/Idle mode and use lightweight, hardware-accelerated Compose drawing so the app feels instant and lag-free.
+- **Confirmed Decision 1 — Pitch-Black AMOLED & Sharp Neon Blue Theme**: Pure `#000000` AMOLED background with razor-sharp `#00F0FF` Neon Blue and `#FFFFFF` borders—zero blurry overlays or laggy animations.
+- **Confirmed Decision 2 — Ultra-Clean Main Screen (History Moved to Settings)**: The main screen displays **only** the Top Bar (`☰` Menu, Assistant Name, `ONLINE / SLEEP` switch), the **Center Voice Orb**, and the bottom **Voice + Message Bar**. All **Chat History & Memory Vault** management now lives inside the **Settings / Side Menu**.
+- **Confirmed Decision 3 — Developer Credit (`MR. SHASHANK`)**: Whenever anyone asks who created or developed the assistant (*"तुम्हें किसने डेवलप किया है?"* / *"Who developed you?"*), it proudly replies that it was developed by **MR. SHASHANK**.
+- **Confirmed Decision 4 — Custom Assistant Name, User Name, Voices & Custom Commands**: Users can change the assistant's wake-word/name (e.g., `Moko` or any name), set their own User Name, pick affectionate voice presets (Pitch & Speed), and create custom voice command rules in Settings.
+- **Confirmed Decision 5 — Universal Multi-AI API Hub (Gemini + ChatGPT + Claude + Custom URL)**: Users can paste any API key (auto-detecting Gemini, ChatGPT, Claude, or Groq) or click **Add API Link + Key** to connect any custom AI website endpoint.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Delivers the redesigned **Moko ("मोको")** assistant with the **Deep Purple & Neon Violet Glass UI**, **Slide-Out Side Drawer (`☰`)**, **Online vs. Sleep Mode**, **Memory & History Vault**, and a lag-free **Gemini 3** voice pipeline.
-- **Key Value**: Fast, accurate responses on new Gemini API keys with zero self-echo loops and smooth UI performance.
+- **What It Does**: A fast, low-battery background voice assistant created by **MR. SHASHANK** that listens like *"Ok Google"* using your chosen wake-word, speaks warmly in Hindi, controls phone hardware & apps by voice, and connects to any AI provider (Gemini, ChatGPT, Claude, or Custom URL).
+- **Key Value**: Combines a crystal-clear AMOLED interface, zero-lag touch and voice response, deep personalization, and universal AI API compatibility.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-- **Clean Main Screen + Side Menu Drawer (`☰`)**:
-  - **Main Screen**: Features the top **`☰` Side Drawer Button**, **MOKO** header, **ONLINE / SLEEP** switcher, lightweight **Neon Violet Glass Orb**, **Chat History & Memory tabs** (with per-item **Keep `🔖`** and **Delete `🗑️`** buttons), and the bottom **Voice (`🎙️`) + Message (`💬`)** bar.
-  - **Side Menu Drawer (`☰`)**: Houses **Settings, API Key & Permissions**, **Online / Sleep Mode controls**, **Memory & History shortcuts**, and **Quick Hardware Controls** (Torch, Lock Phone, Call, SMS, Brightness, Volume, Music).
+- **Main Screen (100% Clean & Sharp)**:
+  - **Top Header**: Left **`☰` Menu / Settings** button, Center **Dynamic Assistant Name** (e.g., `MOKO`), Right **`ONLINE` / `SLEEP`** mode pill switch.
+  - **Centerpiece Crisp AMOLED Voice Orb**: Sharp high-contrast neon blue & white concentric rings with instant touch response to toggle listening, plus a clean response card showing the latest reply.
+  - **Bottom Voice & Message Bar**: Instant **Voice Mic Button (`🎙️`)** alongside the **Message Input Box (`💬`)** and **Send Button**.
+- **Settings & Control Hub (Accessible via `☰`)**:
+  1. **Identity & Personalization**:
+     - **Developer Badge**: Permanently displays **Developed by MR. SHASHANK**.
+     - **Your User Name**: Input box to set who is using the app (e.g., `Mr. Shashank`) so the assistant addresses you affectionately by name.
+     - **Assistant Name / Wake-Word**: Input box to rename the assistant (default `Moko`)—updates the UI header and wake-word detector (`"Hi <Name>"` / `"Ok <Name>"`).
+  2. **Universal Multi-AI API Manager**:
+     - **Provider Selector & Auto-Detect**: Supports **Google Gemini**, **OpenAI ChatGPT**, **Anthropic Claude**, and **Custom API URL**.
+     - **Optional API Endpoint Link**: If the user has a custom website/API link, they can enter it; if left blank, the app automatically uses the official endpoint for their API key.
+  3. **Affectionate Voice Profiles & Custom Commands**:
+     - **Voice Tone Presets**: *Sweet & Loving (प्यारी आवाज़)*, *Crisp Assistant*, *Calm Voice*, *Energetic* + **Pitch & Speed Sliders** + system voice picker.
+     - **Custom Voice Commands**: Add custom *"When I say X ➔ Do/Speak Y"* rules.
+  4. **Conversation History & Memory Vault (Moved from Main Screen)**:
+     - View, bookmark/keep (`🔖`), or delete (`🗑️`) individual chat history items and saved memories.
+  5. **Low-Battery Background & Permissions Matrix**:
+     - One-tap **Allow All Permissions**, **Device Admin**, **Brightness Control**, and **Low-Battery Ok-Google Style Duty Cycle** toggle.
 
 ---
 
-### 3. Technical Architecture & Anti-Lag Strategy
+### 3. Technical Architecture & Multi-AI Routing
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     MOKO ZERO-LAG VOICE & AI PIPELINE                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│  1. Mic Input ("Hi Moko...")                                            │
-│       │                                                                 │
-│       ▼                                                                 │
-│  2. Self-Echo Guard & Wake-Word Filter                                  │
-│     • Rejects audio if TTS is active or within 900ms post-TTS cooldown  │
-│     • Rejects text matching Moko's own last spoken reply                │
-│       │                                                                 │
-│       ▼                                                                 │
-│  3. Gemini 3 Router + Auto Model Discovery                              │
-│     • Primary: gemini-3-flash-preview / gemini-3.1-pro-preview          │
-│     • Auto-Fallback: Queries /v1beta/models on 404 to pick active model │
-│     • Injects Saved Memory Vault + Recent Chat History                  │
-│       │                                                                 │
-│       ▼                                                                 │
-│  4. Hardware Execution & Clean Hindi TTS                                │
-│     • Executes Call/SMS/Torch/Lock/Brightness/Memory                    │
-│     • Speaks concise Hindi reply -> waits 900ms -> resumes Mic cleanly  │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                 PITCH-BLACK AMOLED MAIN SCREEN (ULTRA-CLEAN)              │
+│   [☰ Settings]         [Dynamic Name: MOKO]         [ONLINE / SLEEP]      │
+│                                                                           │
+│                     ((  SHARP NEON BLUE VOICE ORB  ))                     │
+│                     "Hi Moko" • Low-Battery Wake Mode                     │
+│                                                                           │
+│   [🎙️ Voice ON/OFF]    [💬 Message Input...]               [➤ Send]       │
+└───────────────────┬───────────────────────────────────────┬───────────────┘
+                    │                                       │
+                    ▼                                       ▼
+┌───────────────────────────────────────┐ ┌─────────────────────────────────┐
+│     SETTINGS & CONTROL HUB (☰)        │ │  LOW-BATTERY WAKE & APP ENGINE  │
+│ • Developer: MR. SHASHANK             │ │ • Smart Duty-Cycle Recognizer   │
+│ • User Name & Assistant Wake Name     │ │ • Open Any Installed App Voice  │
+│ • Voice Tone (Sweet/Pitch/Speed)      │ │ • Hardware: Call, SMS, Torch,   │
+│ • Custom Commands ("Say X -> Do Y")   │ │   Lock, Brightness, Volume      │
+│ • History & Memory Vault (Keep/Delete)│ └─────────────────┬───────────────┘
+└───────────────────┬───────────────────┘                   │
+                    │                                       │
+                    ▼                                       ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│                     UNIVERSAL MULTI-AI ROUTER ENGINE                      │
+│  • Auto-Detects Key Prefix (AIza* -> Gemini, sk-ant* -> Claude, sk-* ->   │
+│    ChatGPT) OR uses Custom Endpoint URL + API Key                         │
+│  • Injects User Name, Assistant Name, MR. SHASHANK Creator Credit,        │
+│    Custom Commands & Saved Memory Vault into every AI request             │
+└───────────────────────────────────────────────────────────────────────────┘
 ```

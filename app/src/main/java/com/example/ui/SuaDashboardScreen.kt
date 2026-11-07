@@ -4,23 +4,16 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,8 +26,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,27 +33,21 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.BrightnessHigh
-import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Psychology
@@ -70,16 +55,12 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,12 +88,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -120,8 +98,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.CommandLogEntry
-import com.example.data.MokoMemoryItem
+import com.example.data.SuaPreferences
 import com.example.data.SuaStatus
 import com.example.ui.theme.SuaAmber
 import com.example.ui.theme.SuaBorder
@@ -158,10 +135,10 @@ fun SuaDashboardScreen(
     val audioRms by viewModel.audioRmsDb.collectAsStateWithLifecycle()
     val hasApiKey by viewModel.hasEffectiveApiKey.collectAsStateWithLifecycle()
     val batteryPercent by viewModel.batteryPercent.collectAsStateWithLifecycle()
+    val userName by viewModel.userName.collectAsStateWithLifecycle()
+    val assistantName by viewModel.assistantName.collectAsStateWithLifecycle()
 
     var commandInput by remember { mutableStateOf("") }
-    var selectedStreamTab by remember { mutableStateOf(0) } // 0 = Chat History, 1 = Memory Vault
-    var newMemoryText by remember { mutableStateOf("") }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
@@ -189,29 +166,20 @@ fun SuaDashboardScreen(
         }
     }
 
-    val quickSuggestions = remember {
-        listOf(
-            "Hi Moko, Call Rahul" to "Hi Moko Rahul ko call karo",
-            "Flashlight ON" to "Flashlight chalu karo",
-            "Flashlight OFF" to "Flashlight band karo",
-            "Lock Phone" to "Phone ko lock karo",
-            "Save My Name" to "Mera naam Boss hai",
-            "What do you remember?" to "Tumhe kya yaad hai",
-            "Battery Status" to "Battery kitni hai"
-        )
-    }
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = SuaDeepNavy,
+                drawerContainerColor = SuaObsidian,
                 drawerContentColor = SuaTextPrimary,
                 modifier = Modifier
-                    .widthIn(max = 330.dp)
+                    .widthIn(max = 335.dp)
                     .fillMaxHeight()
+                    .border(1.5.dp, SuaCyan, RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
             ) {
                 MokoSideDrawerContent(
+                    assistantName = assistantName,
+                    userName = userName,
                     isOnline = isBgRunning,
                     hasApiKey = hasApiKey,
                     batteryPercent = batteryPercent,
@@ -232,14 +200,6 @@ fun SuaDashboardScreen(
                     },
                     onSwitchToOnline = { requestOnlineMode() },
                     onSwitchToSleep = { viewModel.activateSleepMode() },
-                    onSelectMemoryTab = {
-                        selectedStreamTab = 1
-                        coroutineScope.launch { drawerState.close() }
-                    },
-                    onSelectHistoryTab = {
-                        selectedStreamTab = 0
-                        coroutineScope.launch { drawerState.close() }
-                    },
                     onToggleFlashlight = { viewModel.toggleFlashlightDirect() },
                     onLockPhone = { viewModel.lockScreenDirect() },
                     onBrightnessChange = { viewModel.adjustBrightnessDirect(it, speakFeedback = false) },
@@ -271,15 +231,15 @@ fun SuaDashboardScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(SuaSurfaceElevated)
-                                        .border(1.dp, SuaCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(SuaDeepNavy)
+                                        .border(1.5.dp, SuaCyan, RoundedCornerShape(10.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Menu,
-                                        contentDescription = "Open Moko Menu & Settings Drawer",
+                                        contentDescription = "Open Menu & Settings",
                                         tint = SuaCyan
                                     )
                                 }
@@ -289,7 +249,7 @@ fun SuaDashboardScreen(
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = "MOKO",
+                                        text = assistantName.uppercase(),
                                         style = MaterialTheme.typography.titleLarge,
                                         color = SuaTextPrimary,
                                         fontWeight = FontWeight.ExtraBold
@@ -297,23 +257,24 @@ fun SuaDashboardScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(50))
-                                            .background(SuaCyan.copy(alpha = 0.18f))
-                                            .border(1.dp, SuaCyan.copy(alpha = 0.6f), RoundedCornerShape(50))
-                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(SuaDeepNavy)
+                                            .border(1.dp, SuaCyan, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "AI + MEMORY",
+                                            text = "BY ${SuaPreferences.DEVELOPER_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = SuaCyan
+                                            color = SuaCyan,
+                                            fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
                                 Text(
                                     text = if (isBgRunning) {
-                                        "Online • Works on Lock Screen ('Hi Moko')"
+                                        "ONLINE • Say 'Ok $assistantName' ($userName)"
                                     } else {
-                                        "Sleep Mode • Background Mic Off"
+                                        "SLEEP MODE • Background Mic Off"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (isBgRunning) SuaEmerald else SuaTextSecondary
@@ -321,32 +282,40 @@ fun SuaDashboardScreen(
                             }
                         },
                         actions = {
-                            // Dedicated ONLINE / SLEEP Mode Switcher Pill in Top Bar
                             OnlineSleepSegmentedSwitch(
                                 isOnline = isBgRunning,
                                 onSelectOnline = { requestOnlineMode() },
                                 onSelectSleep = { viewModel.activateSleepMode() }
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            IconButton(
+                                onClick = onOpenSettings,
+                                modifier = Modifier.testTag("top_settings_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Open Settings & History",
+                                    tint = SuaTextPrimary
+                                )
+                            }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = SuaDeepNavy
+                            containerColor = SuaObsidian
                         )
                     )
                 },
                 bottomBar = {
-                    // Clean Voice + Message Dual Control Bar on Main Screen
+                    // Ultra-Sharp Bottom Voice + Message Bar
                     Surface(
-                        color = SuaDeepNavy,
-                        tonalElevation = 12.dp,
+                        color = SuaObsidian,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, SuaBorder.copy(alpha = 0.7f), RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .border(1.5.dp, SuaCyan, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                                .background(SuaDeepNavy)
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -364,23 +333,28 @@ fun SuaDashboardScreen(
                                     },
                                     modifier = Modifier
                                         .height(52.dp)
+                                        .border(
+                                            1.5.dp,
+                                            if (isBgRunning) SuaEmerald else SuaCyan,
+                                            RoundedCornerShape(12.dp)
+                                        )
                                         .testTag("bottom_voice_toggle_button"),
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isBgRunning) SuaEmerald else SuaSurfaceElevated,
+                                        containerColor = if (isBgRunning) SuaEmerald else SuaObsidian,
                                         contentColor = if (isBgRunning) SuaObsidian else SuaCyan
                                     )
                                 ) {
                                     Icon(
                                         imageVector = if (isBgRunning) Icons.Default.Mic else Icons.Default.MicOff,
-                                        contentDescription = "Toggle Moko Voice Mode",
+                                        contentDescription = "Toggle Voice Mode",
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (isBgRunning) "VOICE ON" else "VOICE",
+                                        text = if (isBgRunning) "ON" else "VOICE",
                                         style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.ExtraBold
                                     )
                                 }
 
@@ -393,14 +367,15 @@ fun SuaDashboardScreen(
                                         .testTag("command_input_field"),
                                     placeholder = {
                                         Text(
-                                            text = "Message Moko (Hindi / English)...",
+                                            text = "Message $assistantName (e.g. Call Rahul, Open WhatsApp)...",
                                             style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     },
                                     singleLine = true,
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
@@ -412,11 +387,11 @@ fun SuaDashboardScreen(
                                     ),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = SuaCyan,
-                                        unfocusedBorderColor = SuaBorder,
+                                        unfocusedBorderColor = SuaTextPrimary,
                                         focusedTextColor = SuaTextPrimary,
                                         unfocusedTextColor = SuaTextPrimary,
-                                        focusedContainerColor = SuaSurfaceCard,
-                                        unfocusedContainerColor = SuaSurfaceCard
+                                        focusedContainerColor = SuaObsidian,
+                                        unfocusedContainerColor = SuaObsidian
                                     )
                                 )
 
@@ -430,9 +405,10 @@ fun SuaDashboardScreen(
                                     },
                                     modifier = Modifier
                                         .size(52.dp)
+                                        .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(12.dp))
                                         .testTag("send_command_button"),
-                                    shape = RoundedCornerShape(16.dp),
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(0.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = SuaCyan,
                                         contentColor = SuaObsidian
@@ -440,7 +416,7 @@ fun SuaDashboardScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Send Message to Moko"
+                                        contentDescription = "Send Message"
                                     )
                                 }
                             }
@@ -448,245 +424,90 @@ fun SuaDashboardScreen(
                     }
                 }
             ) { innerPadding ->
-                Box(
+                // ULTRA-CLEAN MAIN SCREEN: Only Center Voice Orb, Status/Response Card & Fast Touch Action!
+                // (All History & Memory Vault items are inside Settings as requested)
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(innerPadding),
-                    contentAlignment = Alignment.TopCenter
+                        .background(SuaObsidian)
+                        .padding(innerPadding)
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    LazyColumn(
+                    // Top Identity & Quick Settings/History Bar
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .widthIn(max = 640.dp)
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                            .widthIn(max = 600.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SuaDeepNavy)
+                            .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        item { Spacer(modifier = Modifier.height(4.dp)) }
-
-                        // CLEAN HERO MOKO NEURAL VOICE ORB CARD
-                        item {
-                            MokoVioletGlassOrbCard(
-                                status = status,
-                                isOnline = isBgRunning,
-                                audioRms = audioRms,
-                                liveTranscript = liveTranscript,
-                                lastReply = lastSuaReply,
-                                memoryCount = memoryItems.size,
-                                onToggleOnlineSleep = {
-                                    if (isBgRunning) {
-                                        viewModel.activateSleepMode()
-                                    } else {
-                                        requestOnlineMode()
-                                    }
-                                },
-                                onTestVoice = { viewModel.testVoiceGreeting() }
+                        Column {
+                            Text(
+                                text = "USER: ${userName.uppercase()}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = SuaTextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "WAKE-WORD: \"OK ${assistantName.uppercase()}\" / \"HI ${assistantName.uppercase()}\"",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SuaCyan
                             )
                         }
 
-                        // COMPACT QUICK SUGGESTION CHIPS
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                quickSuggestions.forEachIndexed { idx, (labelEn, spokenCmd) ->
-                                    AssistChip(
-                                        onClick = { viewModel.executeCommandText(spokenCmd) },
-                                        modifier = Modifier.testTag("quick_cmd_chip_$idx"),
-                                        label = {
-                                            Text(
-                                                text = labelEn,
-                                                style = MaterialTheme.typography.labelLarge,
-                                                color = SuaTextPrimary
-                                            )
-                                        },
-                                        colors = AssistChipDefaults.assistChipColors(
-                                            containerColor = SuaSurfaceCard
-                                        ),
-                                        border = AssistChipDefaults.assistChipBorder(
-                                            enabled = true,
-                                            borderColor = SuaCyan.copy(alpha = 0.45f)
-                                        ),
-                                        shape = RoundedCornerShape(50)
-                                    )
-                                }
-                            }
+                        OutlinedButton(
+                            onClick = onOpenSettings,
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("main_open_history_settings_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = "Open History & Settings",
+                                tint = SuaCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "HISTORY (${commandLogs.size}) & SETTINGS",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SuaTextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-
-                        // STREAM HEADER: CHAT HISTORY vs SAVED MEMORY VAULT
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(
-                                        selected = selectedStreamTab == 0,
-                                        onClick = { selectedStreamTab = 0 },
-                                        modifier = Modifier.testTag("tab_chat_history"),
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Default.History,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        label = { Text("History (${commandLogs.size})") },
-                                        shape = RoundedCornerShape(50),
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = SuaCyan.copy(alpha = 0.24f),
-                                            selectedLabelColor = SuaCyan
-                                        )
-                                    )
-
-                                    FilterChip(
-                                        selected = selectedStreamTab == 1,
-                                        onClick = { selectedStreamTab = 1 },
-                                        modifier = Modifier.testTag("tab_memory_vault"),
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Default.Psychology,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        label = { Text("Memory (${memoryItems.size})") },
-                                        shape = RoundedCornerShape(50),
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = SuaElectricBlue.copy(alpha = 0.24f),
-                                            selectedLabelColor = SuaElectricBlue
-                                        )
-                                    )
-                                }
-
-                                if (selectedStreamTab == 0 && commandLogs.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = { viewModel.clearCommandHistory() },
-                                        modifier = Modifier.testTag("clear_logs_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.DeleteSweep,
-                                            contentDescription = "Clear All Chat History",
-                                            tint = SuaTextSecondary
-                                        )
-                                    }
-                                } else if (selectedStreamTab == 1 && memoryItems.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = { viewModel.clearAllMemories() },
-                                        modifier = Modifier.testTag("clear_memories_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.DeleteSweep,
-                                            contentDescription = "Clear All Saved Memories",
-                                            tint = SuaTextSecondary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // TAB 0: CONVERSATION HISTORY (with Keep/Pin to Memory & Delete per item)
-                        if (selectedStreamTab == 0) {
-                            if (commandLogs.isEmpty()) {
-                                item {
-                                    EmptyGlassStateCard(
-                                        title = "No Conversation History Yet",
-                                        subtitle = "Say 'Hi Moko' in Online mode or send a message below. Every chat is saved here so you can keep it in Memory or delete it anytime."
-                                    )
-                                }
-                            } else {
-                                items(commandLogs, key = { it.id }) { logEntry ->
-                                    MokoHistoryItemCard(
-                                        entry = logEntry,
-                                        onPinToMemory = { viewModel.pinChatToMemory(logEntry) },
-                                        onDeleteItem = { viewModel.deleteCommandLogItem(logEntry.id) }
-                                    )
-                                }
-                            }
-                        } else {
-                            // TAB 1: MOKO MEMORY VAULT (Auto-saved facts + Manual Add + Delete)
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                                    shape = RoundedCornerShape(18.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .border(1.dp, SuaBorder, RoundedCornerShape(18.dp))
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        OutlinedTextField(
-                                            value = newMemoryText,
-                                            onValueChange = { newMemoryText = it },
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .testTag("add_memory_input"),
-                                            placeholder = {
-                                                Text(
-                                                    text = "Add a fact for Moko to remember...",
-                                                    style = MaterialTheme.typography.bodyMedium
-                                                )
-                                            },
-                                            singleLine = true,
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = SuaElectricBlue,
-                                                unfocusedBorderColor = SuaBorder,
-                                                focusedTextColor = SuaTextPrimary,
-                                                unfocusedTextColor = SuaTextPrimary
-                                            )
-                                        )
-                                        Button(
-                                            onClick = {
-                                                if (newMemoryText.isNotBlank()) {
-                                                    viewModel.addManualMemoryFact(newMemoryText)
-                                                    newMemoryText = ""
-                                                }
-                                            },
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = SuaElectricBlue,
-                                                contentColor = SuaTextPrimary
-                                            ),
-                                            modifier = Modifier.testTag("save_memory_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Add,
-                                                contentDescription = "Save Memory"
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("KEEP")
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (memoryItems.isEmpty()) {
-                                item {
-                                    EmptyGlassStateCard(
-                                        title = "Moko Memory Vault is Empty",
-                                        subtitle = "Tell Moko 'Mera naam Rahul hai' or 'Yaad rakhna ki...', or tap the Bookmark icon on any chat message to keep it in Moko's memory."
-                                    )
-                                }
-                            } else {
-                                items(memoryItems, key = { it.id }) { memItem ->
-                                    MokoMemoryCard(
-                                        item = memItem,
-                                        onDelete = { viewModel.deleteMemoryFact(memItem.id) }
-                                    )
-                                }
-                            }
-                        }
-
-                        item { Spacer(modifier = Modifier.height(24.dp)) }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // CENTER SHARP NEON BLUE VOICE ORB + RESPONSE HUD CARD
+                    SharpNeonBlueOrbCard(
+                        assistantName = assistantName,
+                        userName = userName,
+                        status = status,
+                        isOnline = isBgRunning,
+                        audioRms = audioRms,
+                        liveTranscript = liveTranscript,
+                        lastReply = lastSuaReply,
+                        memoryCount = memoryItems.size,
+                        onToggleOnlineSleep = {
+                            if (isBgRunning) {
+                                viewModel.activateSleepMode()
+                            } else {
+                                requestOnlineMode()
+                            }
+                        },
+                        onTestVoice = { viewModel.testVoiceGreeting() }
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
@@ -712,12 +533,12 @@ private fun OnlineSleepSegmentedSwitch(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(SuaSurfaceCard)
+            .clip(RoundedCornerShape(10.dp))
+            .background(SuaDeepNavy)
             .border(
-                width = 1.dp,
-                color = if (isOnline) SuaEmerald.copy(alpha = 0.7f) else SuaBorder,
-                shape = RoundedCornerShape(50)
+                width = 1.5.dp,
+                color = if (isOnline) SuaEmerald else SuaTextPrimary,
+                shape = RoundedCornerShape(10.dp)
             )
             .padding(3.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -725,7 +546,7 @@ private fun OnlineSleepSegmentedSwitch(
         // ONLINE PILL BUTTON
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(50))
+                .clip(RoundedCornerShape(8.dp))
                 .background(if (isOnline) SuaEmerald else Color.Transparent)
                 .clickable {
                     if (!isOnline) onSelectOnline()
@@ -737,7 +558,7 @@ private fun OnlineSleepSegmentedSwitch(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = "Switch Moko to Online Mode",
+                    contentDescription = "Switch to Online Mode",
                     tint = if (isOnline) SuaObsidian else SuaTextSecondary,
                     modifier = Modifier.size(14.dp)
                 )
@@ -745,7 +566,7 @@ private fun OnlineSleepSegmentedSwitch(
                 Text(
                     text = "ONLINE",
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     color = if (isOnline) SuaObsidian else SuaTextSecondary
                 )
             }
@@ -754,13 +575,12 @@ private fun OnlineSleepSegmentedSwitch(
         // SLEEP PILL BUTTON (When in Sleep mode, tapping it also toggles Online as requested!)
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(50))
+                .clip(RoundedCornerShape(8.dp))
                 .background(if (!isOnline) SuaCyanDim else Color.Transparent)
                 .clickable {
                     if (isOnline) {
                         onSelectSleep()
                     } else {
-                        // User asked: "स्लिप बटन पर क्लिक करने पर ऑनलाइन हो जाए"
                         onSelectOnline()
                     }
                 }
@@ -771,7 +591,7 @@ private fun OnlineSleepSegmentedSwitch(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.Bedtime,
-                    contentDescription = "Switch Moko Sleep / Online Mode",
+                    contentDescription = "Switch Sleep / Online Mode",
                     tint = if (!isOnline) SuaTextPrimary else SuaTextSecondary,
                     modifier = Modifier.size(14.dp)
                 )
@@ -779,7 +599,7 @@ private fun OnlineSleepSegmentedSwitch(
                 Text(
                     text = "SLEEP",
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     color = if (!isOnline) SuaTextPrimary else SuaTextSecondary
                 )
             }
@@ -788,7 +608,9 @@ private fun OnlineSleepSegmentedSwitch(
 }
 
 @Composable
-private fun MokoVioletGlassOrbCard(
+private fun SharpNeonBlueOrbCard(
+    assistantName: String,
+    userName: String,
     status: SuaStatus,
     isOnline: Boolean,
     audioRms: Float,
@@ -798,472 +620,251 @@ private fun MokoVioletGlassOrbCard(
     onToggleOnlineSleep: () -> Unit,
     onTestVoice: () -> Unit
 ) {
-    val activeColor = when {
-        status == SuaStatus.SPEAKING -> SuaElectricBlue
+    val activeBorderColor = when {
+        status == SuaStatus.SPEAKING -> SuaEmerald
         status == SuaStatus.PROCESSING -> SuaAmber
         isOnline -> SuaCyan
-        else -> SuaTextSecondary
+        else -> SuaTextPrimary
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            SuaSurfaceElevated.copy(alpha = 0.85f),
-                            SuaSurfaceCard,
-                            SuaDeepNavy
-                        )
-                    )
-                )
-                .border(
-                    width = 1.5.dp,
-                    brush = Brush.linearGradient(
-                        listOf(
-                            activeColor.copy(alpha = 0.8f),
-                            SuaElectricBlue.copy(alpha = 0.5f),
-                            SuaBorder
-                        )
-                    ),
-                    shape = RoundedCornerShape(28.dp)
-                )
-                .padding(20.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Status Pill & Memory Badge Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(
-                                if (isOnline) SuaEmerald.copy(alpha = 0.16f)
-                                else SuaSurfaceElevated
-                            )
-                            .border(
-                                1.dp,
-                                if (isOnline) SuaEmerald else SuaBorder,
-                                RoundedCornerShape(50)
-                            )
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = when {
-                                status == SuaStatus.SPEAKING -> "MOKO SPEAKING (HINDI)"
-                                status == SuaStatus.PROCESSING -> "MOKO THINKING..."
-                                isOnline -> "ONLINE • SAY 'HI MOKO'"
-                                else -> "SLEEP MODE • MIC OFF"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isOnline) SuaEmerald else SuaTextSecondary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(SuaElectricBlue.copy(alpha = 0.15f))
-                                .border(1.dp, SuaElectricBlue.copy(alpha = 0.5f), RoundedCornerShape(50))
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Text(
-                                text = "$memoryCount Memories",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaElectricBlue
-                            )
-                        }
-
-                        IconButton(
-                            onClick = onTestVoice,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .testTag("hud_voice_test_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.RecordVoiceOver,
-                                contentDescription = "Test Moko Voice",
-                                tint = SuaCyan,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // ZERO-LAG NEON VIOLET & MAGENTA GLASS ORB
-                Box(
-                    modifier = Modifier.size(168.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val center = Offset(size.width / 2f, size.height / 2f)
-                        val maxR = size.minDimension / 2f
-                        val rmsBoost = (audioRms / 12f) * 16f
-
-                        // Soft Neon Violet & Pink Radial Aura
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    activeColor.copy(alpha = if (isOnline) 0.34f else 0.10f),
-                                    SuaElectricBlue.copy(alpha = if (isOnline) 0.14f else 0.04f),
-                                    Color.Transparent
-                                ),
-                                center = center,
-                                radius = maxR * 0.96f + rmsBoost
-                            ),
-                            radius = maxR * 0.96f + rmsBoost,
-                            center = center
-                        )
-
-                        // Outer Segmented Violet Glass Ring
-                        val r1 = maxR * 0.86f
-                        val arcSize1 = Size(r1 * 2f, r1 * 2f)
-                        val topLeft1 = Offset(center.x - r1, center.y - r1)
-                        for (i in 0 until 6) {
-                            drawArc(
-                                color = if (isOnline) SuaCyan else SuaBorder,
-                                startAngle = i * 60f,
-                                sweepAngle = 40f,
-                                useCenter = false,
-                                topLeft = topLeft1,
-                                size = arcSize1,
-                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-
-                        // Inner Magenta Accent Ring
-                        val r2 = maxR * 0.72f
-                        val arcSize2 = Size(r2 * 2f, r2 * 2f)
-                        val topLeft2 = Offset(center.x - r2, center.y - r2)
-                        for (i in 0 until 4) {
-                            drawArc(
-                                color = activeColor.copy(alpha = 0.75f),
-                                startAngle = i * 90f + 22f,
-                                sweepAngle = 50f,
-                                useCenter = false,
-                                topLeft = topLeft2,
-                                size = arcSize2,
-                                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
-                            )
-                        }
-                    }
-
-                    // Center Interactive Moko Core Button
-                    Button(
-                        onClick = onToggleOnlineSleep,
-                        modifier = Modifier
-                            .size(102.dp)
-                            .testTag("mic_toggle_button"),
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isOnline) SuaCyan else SuaSurfaceElevated,
-                            contentColor = if (isOnline) SuaObsidian else SuaTextPrimary
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 10.dp)
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isOnline) Icons.Default.Mic else Icons.Default.Bedtime,
-                                contentDescription = if (isOnline) "Switch Moko to Sleep" else "Wake Moko Online",
-                                modifier = Modifier.size(30.dp)
-                            )
-                            Spacer(modifier = Modifier.height(3.dp))
-                            Text(
-                                text = if (isOnline) "ONLINE" else "SLEEP",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(
-                    text = liveTranscript,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = SuaCyan,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Frosted Glass Moko Reply Bubble
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(SuaObsidian.copy(alpha = 0.72f))
-                        .border(1.dp, SuaBorder, RoundedCornerShape(18.dp))
-                        .padding(14.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = SuaElectricBlue,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Text(
-                                    text = "MOKO RESPONSE",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = SuaElectricBlue,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Text(
-                                text = if (isOnline) "LOCK-SCREEN READY" else "STANDBY",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isOnline) SuaEmerald else SuaTextSecondary
-                            )
-                        }
-                        Text(
-                            text = lastReply,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = SuaTextPrimary
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MokoHistoryItemCard(
-    entry: CommandLogEntry,
-    onPinToMemory: () -> Unit,
-    onDeleteItem: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-        shape = RoundedCornerShape(18.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SuaObsidian)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(SuaObsidian)
                 .border(
-                    width = 1.dp,
-                    color = if (entry.isPinnedToMemory) SuaElectricBlue.copy(alpha = 0.7f) else SuaBorder,
-                    shape = RoundedCornerShape(18.dp)
+                    width = 2.dp,
+                    color = activeBorderColor,
+                    shape = RoundedCornerShape(20.dp)
                 )
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Top Status Row inside Card
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(SuaCyan.copy(alpha = 0.16f))
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = entry.actionType.label,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SuaCyan
-                        )
-                    }
-                    Text(
-                        text = entry.timestamp,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SuaTextSecondary
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // KEEP / PIN TO MEMORY BUTTON
-                    IconButton(
-                        onClick = onPinToMemory,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("pin_memory_${entry.id}")
-                    ) {
-                        Icon(
-                            imageVector = if (entry.isPinnedToMemory) {
-                                Icons.Default.Bookmark
-                            } else {
-                                Icons.Default.BookmarkBorder
-                            },
-                            contentDescription = "Save to Moko Memory",
-                            tint = if (entry.isPinnedToMemory) SuaElectricBlue else SuaTextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    // DELETE SINGLE HISTORY ITEM BUTTON
-                    IconButton(
-                        onClick = onDeleteItem,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("delete_history_${entry.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete History Item",
-                            tint = SuaCrimson.copy(alpha = 0.85f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-
-            Text(
-                text = "You: \"${entry.userCommand}\"",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = SuaTextPrimary
-            )
-            Text(
-                text = "Moko: ${entry.suaResponse}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = SuaTextSecondary
-            )
-        }
-    }
-}
-
-@Composable
-private fun MokoMemoryCard(
-    item: MokoMemoryItem,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-        shape = RoundedCornerShape(18.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, SuaElectricBlue.copy(alpha = 0.55f), RoundedCornerShape(18.dp))
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(SuaElectricBlue.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SuaDeepNavy)
+                        .border(
+                            1.5.dp,
+                            if (isOnline) SuaEmerald else SuaTextPrimary,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Psychology,
-                        contentDescription = null,
-                        tint = SuaElectricBlue,
-                        modifier = Modifier.size(20.dp)
+                    Text(
+                        text = when {
+                            status == SuaStatus.SPEAKING -> "${assistantName.uppercase()} SPEAKING..."
+                            status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} PROCESSING..."
+                            isOnline -> "ONLINE • SAY 'OK ${assistantName.uppercase()}'"
+                            else -> "SLEEP MODE • TAP ORB TO WAKE"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isOnline) SuaEmerald else SuaTextPrimary,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
-                Column {
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SuaDeepNavy)
+                        .border(1.dp, SuaCyan, RoundedCornerShape(8.dp))
+                        .clickable { onTestVoice() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .testTag("orb_test_voice_badge")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.RecordVoiceOver,
+                            contentDescription = "Test Sweet Voice",
+                            tint = SuaCyan,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "SWEET VOICE • $memoryCount MEM",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SuaTextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // SHARP PITCH-BLACK & NEON BLUE INTERACTIVE ORB (Instant Touch Response, Zero Blur)
+            val normalizedRms = ((audioRms + 2f) / 12f).coerceIn(0f, 1f)
+
+            Box(
+                modifier = Modifier
+                    .size(190.dp)
+                    .clip(CircleShape)
+                    .background(SuaObsidian)
+                    .clickable { onToggleOnlineSleep() }
+                    .testTag("central_mic_orb"),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val maxRadius = size.minDimension / 2f
+
+                    // Outer crisp white precision ring
+                    drawCircle(
+                        color = Color.White,
+                        radius = maxRadius * 0.96f,
+                        center = center,
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+
+                    // Second dynamic Neon Blue ring reacting to live voice RMS
+                    val rmsScale = if (isOnline) (0.78f + normalizedRms * 0.14f) else 0.78f
+                    drawCircle(
+                        color = activeBorderColor,
+                        radius = maxRadius * rmsScale,
+                        center = center,
+                        style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                    )
+
+                    // 4 crisp tactical crosshair ticks (0, 90, 180, 270 degrees)
+                    val tickOuter = maxRadius * 0.95f
+                    val tickInner = maxRadius * 0.85f
+                    drawLine(
+                        color = SuaCyan,
+                        start = Offset(center.x, center.y - tickOuter),
+                        end = Offset(center.x, center.y - tickInner),
+                        strokeWidth = 3.dp.toPx()
+                    )
+                    drawLine(
+                        color = SuaCyan,
+                        start = Offset(center.x, center.y + tickInner),
+                        end = Offset(center.x, center.y + tickOuter),
+                        strokeWidth = 3.dp.toPx()
+                    )
+                    drawLine(
+                        color = SuaCyan,
+                        start = Offset(center.x - tickOuter, center.y),
+                        end = Offset(center.x - tickInner, center.y),
+                        strokeWidth = 3.dp.toPx()
+                    )
+                    drawLine(
+                        color = SuaCyan,
+                        start = Offset(center.x + tickInner, center.y),
+                        end = Offset(center.x + tickOuter, center.y),
+                        strokeWidth = 3.dp.toPx()
+                    )
+
+                    // Inner solid pitch-black core with sharp Neon border
+                    drawCircle(
+                        color = Color(0xFF050811),
+                        radius = maxRadius * 0.60f,
+                        center = center
+                    )
+                    drawCircle(
+                        color = if (isOnline) SuaCyan else Color.White,
+                        radius = maxRadius * 0.60f,
+                        center = center,
+                        style = Stroke(width = 2.5.dp.toPx())
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = if (isOnline) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = if (isOnline) "$assistantName Online" else "$assistantName Sleep Mode",
+                        tint = if (isOnline) SuaCyan else SuaTextPrimary,
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = item.factText,
-                        style = MaterialTheme.typography.bodyLarge,
+                        text = if (isOnline) "ONLINE" else "SLEEP",
+                        style = MaterialTheme.typography.titleMedium,
                         color = SuaTextPrimary,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = "${if (item.isAutoExtracted) "Auto-Remembered" else "Pinned Memory"} • ${item.timestamp}",
+                        text = if (isOnline) "Tap to Sleep" else "Tap to Wake",
                         style = MaterialTheme.typography.labelSmall,
-                        color = SuaTextSecondary
+                        color = SuaCyan,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.testTag("delete_memory_${item.id}")
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // Sharp High-Contrast Live Transcript & Response Box (Pure Black + White/Neon Borders)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(SuaDeepNavy)
+                    .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete Memory Fact",
-                    tint = SuaCrimson
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "VOICE / COMMAND INPUT:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SuaCyan,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "DEV: ${SuaPreferences.DEVELOPER_NAME}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SuaEmerald,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Text(
+                    text = liveTranscript,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+
+                HorizontalDivider(color = SuaBorder, thickness = 1.dp)
+
+                Text(
+                    text = "${assistantName.uppercase()} RESPONSE FOR ${userName.uppercase()}:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaEmerald,
+                    fontWeight = FontWeight.ExtraBold
+                )
+
+                Text(
+                    text = lastReply,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Medium
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun EmptyGlassStateCard(
-    title: String,
-    subtitle: String
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-        shape = RoundedCornerShape(18.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, SuaBorder, RoundedCornerShape(18.dp))
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = SuaTextPrimary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = SuaTextSecondary,
-                textAlign = TextAlign.Center
-            )
         }
     }
 }
 
 @Composable
 private fun MokoSideDrawerContent(
+    assistantName: String,
+    userName: String,
     isOnline: Boolean,
     hasApiKey: Boolean,
     batteryPercent: Int,
@@ -1277,8 +878,6 @@ private fun MokoSideDrawerContent(
     onOpenFullSettings: () -> Unit,
     onSwitchToOnline: () -> Unit,
     onSwitchToSleep: () -> Unit,
-    onSelectMemoryTab: () -> Unit,
-    onSelectHistoryTab: () -> Unit,
     onToggleFlashlight: () -> Unit,
     onLockPhone: () -> Unit,
     onBrightnessChange: (Int) -> Unit,
@@ -1290,9 +889,10 @@ private fun MokoSideDrawerContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(SuaObsidian)
             .verticalScroll(rememberScrollState())
             .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // Drawer Header
         Row(
@@ -1302,34 +902,68 @@ private fun MokoSideDrawerContent(
         ) {
             Column {
                 Text(
-                    text = "MOKO CONTROL HUB",
+                    text = "${assistantName.uppercase()} CONTROL HUB",
                     style = MaterialTheme.typography.titleLarge,
                     color = SuaTextPrimary,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "Settings, Memory & Hardware Deck",
+                    text = "DEVELOPED BY ${SuaPreferences.DEVELOPER_NAME}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = SuaCyan
+                    color = SuaCyan,
+                    fontWeight = FontWeight.Bold
                 )
             }
             IconButton(onClick = onCloseDrawer) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Close Side Menu",
-                    tint = SuaTextSecondary
+                    tint = SuaTextPrimary
                 )
             }
         }
 
-        // PRIMARY SETTINGS & PERMISSIONS BUTTON IN SIDE DRAWER
+        // User & Wake-Word Card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(SuaDeepNavy)
+                .border(1.5.dp, SuaCyan, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = SuaCyan,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Active User: $userName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = "Wake-Word: \"Ok $assistantName\" / \"Hi $assistantName\" • Battery: $batteryPercent%",
+                style = MaterialTheme.typography.labelSmall,
+                color = SuaTextSecondary
+            )
+        }
+
+        // PRIMARY BUTTON: OPEN SETTINGS, MULTI-AI API, VOICE & HISTORY
         Button(
             onClick = onOpenFullSettings,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
+                .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(12.dp))
                 .testTag("open_settings_button"),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = SuaCyan,
                 contentColor = SuaObsidian
@@ -1337,113 +971,48 @@ private fun MokoSideDrawerContent(
         ) {
             Icon(
                 imageVector = Icons.Default.Settings,
-                contentDescription = "Open Moko Settings & Permissions"
+                contentDescription = "Open Settings & History"
             )
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "SETTINGS, API KEY & PERMISSIONS",
+                text = "SETTINGS, API, VOICE & HISTORY",
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.ExtraBold
             )
         }
 
-        if (!hasApiKey) {
-            Text(
-                text = "Tip: Open Settings above to paste your Gemini API Key & grant all permissions.",
-                style = MaterialTheme.typography.labelSmall,
-                color = SuaAmber
-            )
-        }
-
-        HorizontalDivider(color = SuaBorder)
-
-        // ONLINE vs SLEEP MODE CONTROL IN SIDE DRAWER
-        Text(
-            text = "BACKGROUND & LOCK-SCREEN MODE",
-            style = MaterialTheme.typography.labelSmall,
-            color = SuaCyan
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Button(
-                onClick = onSwitchToOnline,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isOnline) SuaEmerald else SuaSurfaceCard,
-                    contentColor = if (isOnline) SuaObsidian else SuaTextPrimary
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("ONLINE")
-            }
-
-            OutlinedButton(
-                onClick = {
-                    if (isOnline) onSwitchToSleep() else onSwitchToOnline()
-                },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (!isOnline) SuaCyan else SuaTextSecondary
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Bedtime,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("SLEEP")
-            }
-        }
-
-        HorizontalDivider(color = SuaBorder)
-
-        // MEMORY & CHAT VAULT SHORTCUTS
-        Text(
-            text = "MEMORY & CONVERSATION VAULT",
-            style = MaterialTheme.typography.labelSmall,
-            color = SuaCyan
-        )
-
+        // Quick Access to History & Memory inside Settings
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             OutlinedButton(
-                onClick = onSelectHistoryTab,
+                onClick = onOpenFullSettings,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan)
             ) {
                 Icon(
                     imageVector = Icons.Default.History,
                     contentDescription = null,
                     tint = SuaCyan,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("History ($historyCount)", color = SuaTextPrimary)
             }
 
             OutlinedButton(
-                onClick = onSelectMemoryTab,
+                onClick = onOpenFullSettings,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaEmerald)
             ) {
                 Icon(
                     imageVector = Icons.Default.Psychology,
                     contentDescription = null,
-                    tint = SuaElectricBlue,
-                    modifier = Modifier.size(18.dp)
+                    tint = SuaEmerald,
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("Memory ($memoryCount)", color = SuaTextPrimary)
@@ -1452,201 +1021,219 @@ private fun MokoSideDrawerContent(
 
         HorizontalDivider(color = SuaBorder)
 
-        // QUICK HARDWARE OVERRIDES (Moved here so Main Screen stays clean!)
+        // ONLINE vs SLEEP Mode Control inside Drawer
         Text(
-            text = "QUICK HARDWARE CONTROLS • BATTERY $batteryPercent%",
+            text = "BACKGROUND WAKE MODE ('OK ${assistantName.uppercase()}')",
             style = MaterialTheme.typography.labelSmall,
-            color = SuaCyan
+            color = SuaCyan,
+            fontWeight = FontWeight.Bold
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = onSwitchToOnline,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isOnline) SuaEmerald else SuaDeepNavy,
+                    contentColor = if (isOnline) SuaObsidian else SuaTextPrimary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PowerSettingsNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("ONLINE", fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = {
+                    if (isOnline) onSwitchToSleep() else onSwitchToOnline()
+                },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (!isOnline) SuaCyanDim else SuaDeepNavy,
+                    contentColor = SuaTextPrimary
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Bedtime,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("SLEEP", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        HorizontalDivider(color = SuaBorder)
+
+        // Hardware Controls inside Side Menu Drawer
+        Text(
+            text = "QUICK HARDWARE CONTROLS",
+            style = MaterialTheme.typography.labelSmall,
+            color = SuaCyan,
+            fontWeight = FontWeight.Bold
         )
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            DrawerHardwareButton(
+            OutlinedButton(
+                onClick = onToggleFlashlight,
                 modifier = Modifier
                     .weight(1f)
-                    .testTag("flashlight_toggle_card"),
-                label = if (isFlashlightOn) "Torch ON" else "Torch OFF",
-                icon = if (isFlashlightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
-                accent = if (isFlashlightOn) SuaAmber else SuaCyan,
-                onClick = onToggleFlashlight
-            )
-
-            DrawerHardwareButton(
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("lock_phone_card"),
-                label = "Lock Phone",
-                icon = Icons.Default.Lock,
-                accent = SuaCrimson,
-                onClick = onLockPhone
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            DrawerHardwareButton(
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("call_khushi_card"),
-                label = "Voice Call",
-                icon = Icons.Default.Call,
-                accent = SuaEmerald,
-                onClick = { onExecuteCommand("Khushi ko call lagao") }
-            )
-
-            DrawerHardwareButton(
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("send_sms_card"),
-                label = "Quick SMS",
-                icon = Icons.AutoMirrored.Filled.Message,
-                accent = SuaElectricBlue,
-                onClick = { onExecuteCommand("Khushi ko message karo ki I am on my way") }
-            )
-        }
-
-        // Brightness & Volume Sliders inside Drawer
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, SuaBorder, RoundedCornerShape(16.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .testTag("quick_flashlight_tile"),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isFlashlightOn) SuaEmerald else SuaTextPrimary
+                )
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.BrightnessHigh,
-                            contentDescription = null,
-                            tint = SuaAmber,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Brightness", style = MaterialTheme.typography.labelLarge, color = SuaTextPrimary)
-                    }
-                    Text("$brightnessPercent%", style = MaterialTheme.typography.labelLarge, color = SuaAmber)
-                }
-                Slider(
-                    value = brightnessPercent.toFloat(),
-                    onValueChange = { onBrightnessChange(it.toInt()) },
-                    onValueChangeFinished = onBrightnessCommit,
-                    valueRange = 5f..100f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = SuaAmber,
-                        activeTrackColor = SuaAmber
-                    )
+                Icon(
+                    imageVector = if (isFlashlightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
+                    contentDescription = "Toggle Flashlight",
+                    tint = if (isFlashlightOn) SuaEmerald else SuaCyan,
+                    modifier = Modifier.size(18.dp)
                 )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isFlashlightOn) "Torch ON" else "Torch OFF", color = SuaTextPrimary)
+            }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = null,
-                            tint = SuaCyan,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Sound Volume", style = MaterialTheme.typography.labelLarge, color = SuaTextPrimary)
-                    }
-                    Text("$volumePercent%", style = MaterialTheme.typography.labelLarge, color = SuaCyan)
-                }
-                Slider(
-                    value = volumePercent.toFloat(),
-                    onValueChange = { onVolumeChange(it.toInt()) },
-                    onValueChangeFinished = onVolumeCommit,
-                    valueRange = 0f..100f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = SuaCyan,
-                        activeTrackColor = SuaCyan
-                    )
+            OutlinedButton(
+                onClick = onLockPhone,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("quick_lock_tile"),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaTextPrimary)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Lock Phone",
+                    tint = SuaAmber,
+                    modifier = Modifier.size(18.dp)
                 )
-
-                // Media Transport Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = { onExecuteCommand("Previous song") }) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous Track", tint = SuaTextPrimary)
-                    }
-                    Button(
-                        onClick = {
-                            if (isMusicPlaying) onExecuteCommand("Music band karo")
-                            else onExecuteCommand("Music chalao")
-                        },
-                        shape = RoundedCornerShape(50),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = SuaCyan,
-                            contentColor = SuaObsidian
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isMusicPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play or Pause Music"
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isMusicPlaying) "PAUSE" else "PLAY")
-                    }
-                    IconButton(onClick = { onExecuteCommand("Next song") }) {
-                        Icon(Icons.Default.SkipNext, contentDescription = "Next Track", tint = SuaTextPrimary)
-                    }
-                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Lock Phone", color = SuaTextPrimary)
             }
         }
-    }
-}
 
-@Composable
-private fun DrawerHardwareButton(
-    modifier: Modifier = Modifier,
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    accent: Color,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = modifier.clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-        shape = RoundedCornerShape(14.dp)
-    ) {
+        // Brightness Slider
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(SuaDeepNavy)
+                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.BrightnessHigh,
+                        contentDescription = null,
+                        tint = SuaCyan,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Brightness", style = MaterialTheme.typography.bodyMedium, color = SuaTextPrimary)
+                }
+                Text("$brightnessPercent%", style = MaterialTheme.typography.labelLarge, color = SuaCyan)
+            }
+            Slider(
+                value = brightnessPercent.toFloat(),
+                onValueChange = { onBrightnessChange(it.toInt()) },
+                onValueChangeFinished = onBrightnessCommit,
+                valueRange = 5f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = SuaCyan,
+                    activeTrackColor = SuaCyan
+                )
+            )
+        }
+
+        // Volume Slider
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(SuaDeepNavy)
+                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = SuaElectricBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Sound Volume", style = MaterialTheme.typography.bodyMedium, color = SuaTextPrimary)
+                }
+                Text("$volumePercent%", style = MaterialTheme.typography.labelLarge, color = SuaElectricBlue)
+            }
+            Slider(
+                value = volumePercent.toFloat(),
+                onValueChange = { onVolumeChange(it.toInt()) },
+                onValueChangeFinished = onVolumeCommit,
+                valueRange = 0f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = SuaElectricBlue,
+                    activeTrackColor = SuaElectricBlue
+                )
+            )
+        }
+
+        // Media Transport Controls
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(14.dp))
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(SuaDeepNavy)
+                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = accent,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = SuaTextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            IconButton(onClick = { onExecuteCommand("Previous song") }) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous Track", tint = SuaTextPrimary)
+            }
+            IconButton(
+                onClick = {
+                    onExecuteCommand(if (isMusicPlaying) "Pause music" else "Play music")
+                }
+            ) {
+                Icon(
+                    imageVector = if (isMusicPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = "Play or Pause Music",
+                    tint = SuaCyan
+                )
+            }
+            IconButton(onClick = { onExecuteCommand("Next song") }) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Next Track", tint = SuaTextPrimary)
+            }
         }
+
+        Text(
+            text = "API Status: ${if (hasApiKey) "AI Key Linked" else "Offline Hardware Mode"} • Dev: ${SuaPreferences.DEVELOPER_NAME}",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (hasApiKey) SuaEmerald else SuaTextSecondary
+        )
     }
 }
 
@@ -1655,61 +1242,38 @@ private fun SuaScreenLockOverlay(onUnlock: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SuaObsidian.copy(alpha = 0.96f))
-            .clickable(enabled = false) {},
+            .background(SuaObsidian)
+            .clickable { onUnlock() },
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
+            modifier = Modifier
+                .padding(32.dp)
+                .border(2.dp, SuaCyan, RoundedCornerShape(20.dp))
+                .background(SuaDeepNavy)
+                .padding(28.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(CircleShape)
-                    .background(SuaCrimson.copy(alpha = 0.16f))
-                    .border(2.dp, SuaCrimson, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "Moko Security Shield",
-                    tint = SuaCrimson,
-                    modifier = Modifier.size(44.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(20.dp))
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Locked",
+                tint = SuaCyan,
+                modifier = Modifier.size(64.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "MOKO SCREEN LOCKED",
+                text = "SCREEN LOCKED",
                 style = MaterialTheme.typography.headlineMedium,
-                color = SuaTextPrimary
+                color = SuaTextPrimary,
+                fontWeight = FontWeight.ExtraBold
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Moko is still listening in the background if Online Mode is active.",
+                text = "Tap anywhere to unlock display",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SuaTextSecondary,
+                color = SuaCyan,
                 textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(28.dp))
-            Button(
-                onClick = onUnlock,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .testTag("unlock_overlay_button"),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SuaCyan,
-                    contentColor = SuaObsidian
-                )
-            ) {
-                Text(
-                    text = "UNLOCK MOKO SCREEN",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
         }
     }
 }

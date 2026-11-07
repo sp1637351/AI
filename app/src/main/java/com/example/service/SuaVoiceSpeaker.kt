@@ -200,6 +200,8 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
                 if (ctx != null) {
                     val prefs = SuaPreferences(ctx)
                     applyLocale(prefs.getVoiceLocale())
+                    tts?.setPitch(prefs.getVoicePitch())
+                    tts?.setSpeechRate(prefs.getVoiceSpeed())
                     ensureAudibleVolume(ctx)
                     requestAudioFocus(ctx)
                 }

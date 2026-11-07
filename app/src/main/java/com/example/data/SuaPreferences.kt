@@ -20,20 +20,32 @@ class SuaPreferences(context: Context) {
 
     companion object {
         private const val KEY_USER_GEMINI_API_KEY_ENC = "user_gemini_api_key_enc_v2"
+        private const val KEY_AI_PROVIDER = "ai_provider_type_v1"
+        private const val KEY_CUSTOM_API_URL = "custom_api_endpoint_url_v1"
         private const val KEY_CONTINUOUS_BG = "continuous_bg_listening"
+        private const val KEY_LOW_BATTERY_WAKE = "low_battery_ok_google_wake"
         private const val KEY_REQUIRE_WAKE_WORD = "require_wake_word_bg"
         private const val KEY_GEMINI_MODEL = "gemini_model_id_v3"
         private const val KEY_VOICE_LOCALE = "voice_locale"
+        private const val KEY_VOICE_PRESET = "voice_preset_v1"
+        private const val KEY_VOICE_PITCH = "voice_pitch_v1"
+        private const val KEY_VOICE_SPEED = "voice_speed_v1"
+        private const val KEY_USER_NAME = "custom_user_name_v1"
+        private const val KEY_ASSISTANT_NAME = "custom_assistant_name_v1"
         private const val KEY_QUICK_CONTACTS = "quick_contacts_real_v3_json"
         private const val KEY_COMMAND_LOGS = "command_logs_v3_json"
         private const val KEY_MOKO_MEMORIES = "moko_memories_v1_json"
+        private const val KEY_CUSTOM_COMMANDS = "custom_voice_commands_v1_json"
         private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
+
+        const val DEVELOPER_NAME = "MR. SHASHANK"
 
         val SUPPORTED_GEMINI_MODELS = listOf(
             "gemini-3-flash-preview",
             "gemini-3.1-pro-preview",
             "gemini-3.1-flash-lite-preview",
-            "gemini-2.5-flash"
+            "gpt-4o-mini",
+            "claude-3-5-haiku-latest"
         )
     }
 
@@ -55,6 +67,110 @@ class SuaPreferences(context: Context) {
 
     fun deleteUserApiKey() {
         prefs.edit().remove(KEY_USER_GEMINI_API_KEY_ENC).apply()
+    }
+
+    fun getAiProvider(): AiProviderType {
+        val name = prefs.getString(KEY_AI_PROVIDER, AiProviderType.AUTO.name) ?: AiProviderType.AUTO.name
+        return try {
+            AiProviderType.valueOf(name)
+        } catch (_: Exception) {
+            AiProviderType.AUTO
+        }
+    }
+
+    fun setAiProvider(provider: AiProviderType) {
+        prefs.edit().putString(KEY_AI_PROVIDER, provider.name).apply()
+    }
+
+    fun getCustomApiUrl(): String {
+        return prefs.getString(KEY_CUSTOM_API_URL, "")?.trim().orEmpty()
+    }
+
+    fun setCustomApiUrl(url: String) {
+        prefs.edit().putString(KEY_CUSTOM_API_URL, url.trim()).apply()
+    }
+
+    /**
+     * Auto-detects the AI provider from the saved API Key or custom URL if set to AUTO.
+     */
+    fun resolveActiveAiProvider(apiKey: String = getEffectiveApiKey()): AiProviderType {
+        val explicit = getAiProvider()
+        if (explicit != AiProviderType.AUTO) return explicit
+
+        val customUrl = getCustomApiUrl().lowercase()
+        val key = apiKey.trim()
+        return when {
+            customUrl.contains("anthropic.com") || key.startsWith("sk-ant-") -> AiProviderType.CLAUDE
+            customUrl.contains("openai.com") || customUrl.contains("openrouter.ai") ||
+                customUrl.contains("groq.com") || customUrl.contains("deepseek.com") -> AiProviderType.OPENAI
+            customUrl.startsWith("http://") || customUrl.startsWith("https://") -> {
+                if (customUrl.contains("generativelanguage.googleapis.com")) AiProviderType.GEMINI
+                else AiProviderType.CUSTOM
+            }
+            key.startsWith("sk-") || key.startsWith("gsk_") -> AiProviderType.OPENAI
+            else -> AiProviderType.GEMINI
+        }
+    }
+
+    fun getUserName(): String {
+        return prefs.getString(KEY_USER_NAME, "Shashank")?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: "Shashank"
+    }
+
+    fun setUserName(name: String) {
+        val clean = name.trim().ifEmpty { "Shashank" }
+        prefs.edit().putString(KEY_USER_NAME, clean).apply()
+    }
+
+    fun getAssistantName(): String {
+        return prefs.getString(KEY_ASSISTANT_NAME, "Moko")?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: "Moko"
+    }
+
+    fun setAssistantName(name: String) {
+        val clean = name.trim().ifEmpty { "Moko" }
+        prefs.edit().putString(KEY_ASSISTANT_NAME, clean).apply()
+    }
+
+    fun getVoicePreset(): VoicePreset {
+        val raw = prefs.getString(KEY_VOICE_PRESET, VoicePreset.SWEET.name) ?: VoicePreset.SWEET.name
+        return try {
+            VoicePreset.valueOf(raw)
+        } catch (_: Exception) {
+            VoicePreset.SWEET
+        }
+    }
+
+    fun setVoicePreset(preset: VoicePreset) {
+        prefs.edit()
+            .putString(KEY_VOICE_PRESET, preset.name)
+            .putFloat(KEY_VOICE_PITCH, preset.pitch)
+            .putFloat(KEY_VOICE_SPEED, preset.speed)
+            .apply()
+    }
+
+    fun getVoicePitch(): Float {
+        return prefs.getFloat(KEY_VOICE_PITCH, VoicePreset.SWEET.pitch).coerceIn(0.6f, 1.6f)
+    }
+
+    fun setVoicePitch(pitch: Float) {
+        prefs.edit().putFloat(KEY_VOICE_PITCH, pitch.coerceIn(0.6f, 1.6f)).apply()
+    }
+
+    fun getVoiceSpeed(): Float {
+        return prefs.getFloat(KEY_VOICE_SPEED, VoicePreset.SWEET.speed).coerceIn(0.6f, 1.6f)
+    }
+
+    fun setVoiceSpeed(speed: Float) {
+        prefs.edit().putFloat(KEY_VOICE_SPEED, speed.coerceIn(0.6f, 1.6f)).apply()
+    }
+
+    fun isLowBatteryWakeMode(): Boolean {
+        return prefs.getBoolean(KEY_LOW_BATTERY_WAKE, true)
+    }
+
+    fun setLowBatteryWakeMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LOW_BATTERY_WAKE, enabled).apply()
     }
 
     private fun getOrCreateSecretKey(): SecretKey? {
@@ -179,6 +295,43 @@ class SuaPreferences(context: Context) {
 
     fun setVoiceLocale(locale: String) {
         prefs.edit().putString(KEY_VOICE_LOCALE, locale).apply()
+    }
+
+    fun getCustomCommands(): List<CustomVoiceCommand> {
+        val raw = prefs.getString(KEY_CUSTOM_COMMANDS, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            val list = mutableListOf<CustomVoiceCommand>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val trig = obj.optString("triggerPhrase", "").trim()
+                val resp = obj.optString("spokenResponse", "").trim()
+                if (trig.isNotEmpty() && resp.isNotEmpty()) {
+                    list.add(
+                        CustomVoiceCommand(
+                            id = obj.optLong("id", System.currentTimeMillis() + i),
+                            triggerPhrase = trig,
+                            spokenResponse = resp
+                        )
+                    )
+                }
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveCustomCommands(commands: List<CustomVoiceCommand>) {
+        val arr = JSONArray()
+        commands.take(50).forEach { cmd ->
+            val obj = JSONObject()
+            obj.put("id", cmd.id)
+            obj.put("triggerPhrase", cmd.triggerPhrase)
+            obj.put("spokenResponse", cmd.spokenResponse)
+            arr.put(obj)
+        }
+        prefs.edit().putString(KEY_CUSTOM_COMMANDS, arr.toString()).apply()
     }
 
     fun getQuickContacts(): List<QuickContact> {

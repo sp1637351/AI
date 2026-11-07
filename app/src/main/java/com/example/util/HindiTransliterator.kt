@@ -206,15 +206,42 @@ object HindiTransliterator {
     )
 
     /**
-     * Checks if the spoken text contains the MOKO wake word ("हाय मोको" / "Hi Moko" / "Moko") and returns
-     * Pair(hasWakeWord, commandAfterWakeWord).
+     * Checks if the spoken text contains the configured wake word (e.g. "Hi Moko", "Ok Moko",
+     * or whatever custom name the user set in Settings) and returns Pair(hasWakeWord, commandAfterWakeWord).
      */
-    fun checkAndStripWakeWord(rawSpoken: String): Pair<Boolean, String> {
+    fun checkAndStripWakeWord(
+        rawSpoken: String,
+        customAssistantName: String = "Moko"
+    ): Pair<Boolean, String> {
         val trimmed = rawSpoken.trim()
         if (trimmed.isEmpty()) return Pair(false, "")
         val lower = trimmed.lowercase()
 
-        for (wake in wakeWordPatterns) {
+        val dynamicName = customAssistantName.trim().lowercase().ifEmpty { "moko" }
+        val dynamicRoman = toRoman(dynamicName).lowercase().ifEmpty { dynamicName }
+
+        val dynamicPatterns = buildList {
+            for (n in listOf(dynamicName, dynamicRoman).distinct()) {
+                if (n.isNotEmpty()) {
+                    add("ok $n")
+                    add("okay $n")
+                    add("hey $n")
+                    add("hi $n")
+                    add("hello $n")
+                    add("suno $n")
+                    add("oye $n")
+                    add("ओके $n")
+                    add("हाय $n")
+                    add("हे $n")
+                    add("हेलो $n")
+                    add("सुनो $n")
+                    add(n)
+                }
+            }
+            addAll(wakeWordPatterns)
+        }.distinct()
+
+        for (wake in dynamicPatterns) {
             val idx = lower.indexOf(wake)
             if (idx >= 0) {
                 val beforeOk = idx == 0 || !lower[idx - 1].isLetterOrDigit()

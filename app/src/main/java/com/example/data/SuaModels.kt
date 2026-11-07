@@ -28,9 +28,26 @@ enum class DeviceActionType(val label: String, val codeTag: String) {
     BATTERY_STATUS("BATTERY STATUS", "MOKO.BATTERY"),
     SET_ALARM("SET ALARM", "MOKO.ALARM"),
     OPEN_SETTINGS("SYSTEM SETTINGS", "MOKO.SETTINGS"),
+    OPEN_APP("LAUNCH APP", "MOKO.APP.OPEN"),
     TIME_DATE("TIME & DATE", "MOKO.TIME"),
     MEMORY_SAVE("MEMORY SAVED", "MOKO.MEMORY"),
-    AI_CHAT("MOKO AI CHAT", "MOKO.CHAT")
+    CUSTOM_CMD("CUSTOM COMMAND", "MOKO.CUSTOM"),
+    AI_CHAT("AI RESPONSE", "MOKO.CHAT")
+}
+
+enum class AiProviderType(val displayName: String, val defaultBaseUrl: String) {
+    AUTO("Auto-Detect from Key", ""),
+    GEMINI("Google Gemini AI", "https://generativelanguage.googleapis.com/v1beta/models"),
+    OPENAI("ChatGPT (OpenAI)", "https://api.openai.com/v1/chat/completions"),
+    CLAUDE("Claude AI (Anthropic)", "https://api.anthropic.com/v1/messages"),
+    CUSTOM("Custom API Website / Link", "https://api.openai.com/v1/chat/completions")
+}
+
+enum class VoicePreset(val label: String, val pitch: Float, val speed: Float) {
+    SWEET("Sweet & Loving (प्यारी आवाज़)", 1.18f, 0.98f),
+    NATURAL("Warm & Natural", 1.04f, 1.03f),
+    ENERGETIC("Fast & Energetic", 1.10f, 1.16f),
+    CALM("Calm & Deep", 0.88f, 0.95f)
 }
 
 data class ParsedCommand(
@@ -59,6 +76,12 @@ data class MokoMemoryItem(
     val factText: String,
     val timestamp: String,
     val isAutoExtracted: Boolean = true
+)
+
+data class CustomVoiceCommand(
+    val id: Long,
+    val triggerPhrase: String,
+    val spokenResponse: String
 )
 
 data class QuickContact(

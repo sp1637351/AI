@@ -33,6 +33,12 @@ class ExampleUnitTest {
         assertTrue(woke3)
         assertEquals("फोन को लॉक करो", cmd3)
 
+        val (wokeCustom, cmdCustom) = HindiTransliterator.checkAndStripWakeWord("Ok Chitti open WhatsApp", "Chitti")
+        assertTrue(wokeCustom)
+        assertEquals("open WhatsApp", cmdCustom)
+
+        assertEquals("MR. SHASHANK", com.example.data.SuaPreferences.DEVELOPER_NAME)
+
         val (woke4, _) = HindiTransliterator.checkAndStripWakeWord("राहुल को कॉल करो")
         assertFalse(woke4)
     }

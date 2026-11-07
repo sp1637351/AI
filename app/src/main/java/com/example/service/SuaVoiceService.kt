@@ -197,19 +197,21 @@ class SuaVoiceService : Service() {
                 acquireWakeLock()
                 SuaStateRepository.setBackgroundServiceRunning(true)
                 SuaStateRepository.markWakeWordDetected()
+                val botName = prefs.getAssistantName()
+                val userName = prefs.getUserName()
                 val wakeNote = if (prefs.isWakeWordRequiredInBackground()) {
-                    "Say 'Hi Moko' anytime (works even when screen is locked)"
+                    "Say 'Ok $botName' or 'Hi $botName' anytime (Low-Battery Wake Engine)"
                 } else {
                     "Continuous listening active"
                 }
                 SuaStateRepository.updateLiveTranscript("ONLINE MODE // $wakeNote")
-                SuaStateRepository.updateLastReply("MOKO ONLINE // Active in background & lock screen. $wakeNote.")
+                SuaStateRepository.updateLastReply("$botName ONLINE // Active in background & lock screen. $wakeNote.")
                 startForegroundWithNotification("ONLINE // $wakeNote")
 
-                SuaVoiceSpeaker.speak("नमस्ते बॉस, मोको ऑनलाइन हो गई है। फोन लॉक होने पर भी आप हाय मोको बोलकर कोई भी काम करवा सकते हैं।") {
+                SuaVoiceSpeaker.speak("नमस्ते $userName! मैं $botName ऑनलाइन हो गई हूँ। फोन लॉक होने पर भी आप ओके $botName या हाय $botName बोलकर कोई भी काम करवा सकते हैं।") {
                     if (shouldKeepListening) {
                         SuaStateRepository.markWakeWordDetected()
-                        scheduleNextListen(350L)
+                        scheduleNextListen(300L)
                     }
                 }
             }
@@ -294,9 +296,10 @@ class SuaVoiceService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val botName = prefs.getAssistantName()
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("MOKO ONLINE // Say 'Hi Moko'")
+            .setContentTitle("$botName ONLINE // Say 'Ok $botName'")
             .setContentText(contentText)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -347,11 +350,12 @@ class SuaVoiceService : Service() {
         override fun onReadyForSpeech(params: Bundle?) {
             isCurrentlyListening = true
             SuaStateRepository.updateStatus(SuaStatus.LISTENING)
+            val botName = prefs.getAssistantName()
             val wakeActive = !prefs.isWakeWordRequiredInBackground() ||
                 SuaStateRepository.isWithinWakeConversationWindow()
             SuaStateRepository.updateLiveTranscript(
-                if (wakeActive) "MOKO LISTENING // Speak your command now..."
-                else "ONLINE // Say 'Hi Moko' to wake..."
+                if (wakeActive) "$botName LISTENING // Speak your command now..."
+                else "ONLINE // Say 'Ok $botName' or 'Hi $botName'..."
             )
         }
 
@@ -360,7 +364,6 @@ class SuaVoiceService : Service() {
         }
 
         override fun onRmsChanged(rmsdB: Float) {
-            // Throttle RMS updates to max 4 times/sec so UI never lags from 30-FPS recompositions
             val now = System.currentTimeMillis()
             if (now - lastRmsUpdateMs >= 260L) {
                 lastRmsUpdateMs = now
@@ -380,13 +383,14 @@ class SuaVoiceService : Service() {
             SuaStateRepository.updateAudioRms(0f)
             if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
                 acquireWakeLock()
+                val lowBatteryDelay = if (prefs.isLowBatteryWakeMode()) 1650L else 1100L
                 if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                     error == SpeechRecognizer.ERROR_CLIENT
                 ) {
                     initSpeechRecognizer()
-                    scheduleNextListen(1500L)
+                    scheduleNextListen(lowBatteryDelay + 300L)
                 } else {
-                    scheduleNextListen(1200L)
+                    scheduleNextListen(lowBatteryDelay)
                 }
             } else {
                 SuaStateRepository.updateStatus(SuaStatus.IDLE)
@@ -401,7 +405,8 @@ class SuaVoiceService : Service() {
             if (spokenText.isNotEmpty()) {
                 processRecognizedCommand(spokenText, fromMic = true)
             } else if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                scheduleNextListen(1000L)
+                val nextDelay = if (prefs.isLowBatteryWakeMode()) 1350L else 950L
+                scheduleNextListen(nextDelay)
             }
         }
 
@@ -426,7 +431,7 @@ class SuaVoiceService : Service() {
         mainHandler.post {
             if (!shouldKeepListening) return@post
 
-            // Never open the microphone while Moko's TTS speaker is still playing or cooling down!
+            // Never open the microphone while TTS speaker is still playing or cooling down!
             if (SuaVoiceSpeaker.isSpeakingNow || SuaVoiceSpeaker.isInPostSpeechCooldown(800L)) {
                 scheduleNextListen(950L)
                 return@post
@@ -455,13 +460,16 @@ class SuaVoiceService : Service() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, prefs.getVoiceLocale())
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && prefs.isLowBatteryWakeMode()) {
+                        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                    }
                     putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1800L
+                        1600L
                     )
                     putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1400L
+                        1200L
                     )
                 }
                 speechRecognizer?.startListening(recognizerIntent)
@@ -497,7 +505,7 @@ class SuaVoiceService : Service() {
     private fun processRecognizedCommand(rawSpokenText: String, fromMic: Boolean) {
         stopListeningInternal()
 
-        // 1. Acoustic Self-Echo Guard: never process Moko's own TTS speaker output as a user command!
+        // 1. Acoustic Self-Echo Guard: never process TTS speaker output as a user command!
         if (fromMic && SuaVoiceSpeaker.isLikelySelfEcho(rawSpokenText)) {
             if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
                 scheduleNextListen(950L)
@@ -505,15 +513,18 @@ class SuaVoiceService : Service() {
             return
         }
 
-        val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText)
+        val botName = prefs.getAssistantName()
+        val userName = prefs.getUserName()
+        val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText, botName)
         val wakeRequired = fromMic && prefs.isWakeWordRequiredInBackground()
         val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow()
 
         if (wakeRequired && !hasWakeWord && !inActiveWindow) {
             val ignoredHud = brain.sanitizeForHud(rawSpokenText)
-            SuaStateRepository.updateLiveTranscript("STANDBY // Ignored ambient: \"$ignoredHud\" (Say 'Hi Moko')")
+            SuaStateRepository.updateLiveTranscript("STANDBY // Ignored ambient: \"$ignoredHud\" (Say 'Ok $botName')")
             if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                scheduleNextListen(900L)
+                val standbyDelay = if (prefs.isLowBatteryWakeMode()) 1250L else 850L
+                scheduleNextListen(standbyDelay)
             }
             return
         }
@@ -524,15 +535,15 @@ class SuaVoiceService : Service() {
 
         val effectiveCommand = if (hasWakeWord) strippedAfterWake else rawSpokenText.trim()
 
-        // User said "Hi Moko" / "Hey Moko" / "हाय मोको" with no command yet -> wake up & listen!
+        // User said "Ok Moko" / "Hi Moko" with no command yet -> wake up & listen affectionately!
         if (effectiveCommand.isEmpty()) {
             SuaStateRepository.markWakeWordDetected()
-            SuaStateRepository.updateLiveTranscript("MOKO AWAKE // Yes Boss, speak your command...")
-            SuaStateRepository.updateLastReply("HI MOKO DETECTED // Listening for your command (22s active window)...")
-            SuaVoiceSpeaker.speak("हाँ बॉस, बोलिए क्या काम करना है?") {
+            SuaStateRepository.updateLiveTranscript("$botName AWAKE // Yes $userName, speak your command...")
+            SuaStateRepository.updateLastReply("WAKE-WORD DETECTED // Listening for $userName's command (22s active window)...")
+            SuaVoiceSpeaker.speak("हाँ मेरे प्यारे $userName, बोलिए क्या काम करना है?") {
                 SuaStateRepository.markWakeWordDetected()
                 if (shouldKeepListening) {
-                    scheduleNextListen(300L)
+                    scheduleNextListen(260L)
                 }
             }
             return
@@ -560,7 +571,7 @@ class SuaVoiceService : Service() {
 
             SuaVoiceSpeaker.speak(execResult.finalSpokenReply) {
                 if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                    scheduleNextListen(550L)
+                    scheduleNextListen(450L)
                 } else {
                     SuaStateRepository.updateStatus(
                         if (shouldKeepListening) SuaStatus.LISTENING else SuaStatus.IDLE

@@ -246,18 +246,130 @@ class SuaDeviceController(private val context: Context) {
                 customSpoken = parsed.spokenReply
             )
             DeviceActionType.OPEN_SETTINGS -> openSystemSettings(parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.OPEN_APP -> openInstalledApp(parsed.target, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.CUSTOM_CMD -> ActionExecutionResult(
+                success = true,
+                displayReply = parsed.displayReply.ifBlank { "CUSTOM CMD // Executed '${parsed.target}'" },
+                finalSpokenReply = parsed.spokenReply.ifBlank { "जी ${prefs.getUserName()}, आपका कस्टम कमांड पूरा हो गया।" }
+            )
             DeviceActionType.TIME_DATE -> reportTimeAndDate(parsed.displayReply, parsed.spokenReply)
             DeviceActionType.MEMORY_SAVE -> ActionExecutionResult(
                 success = true,
-                displayReply = parsed.displayReply.ifBlank { "MOKO MEMORY // Saved to Memory Vault: ${parsed.memoryFact}" },
-                finalSpokenReply = parsed.spokenReply.ifBlank { "जी बॉस, मैंने यह बात अपनी मेमोरी में सेव कर ली है।" }
+                displayReply = parsed.displayReply.ifBlank { "MEMORY SAVED // ${parsed.memoryFact}" },
+                finalSpokenReply = parsed.spokenReply.ifBlank { "जी ${prefs.getUserName()}, मैंने यह बात अपनी मेमोरी में सेव कर ली है।" }
             )
             DeviceActionType.AI_CHAT -> ActionExecutionResult(
                 success = true,
-                displayReply = parsed.displayReply.ifBlank { "Moko is ready for your next command." },
-                finalSpokenReply = parsed.spokenReply.ifBlank { "जी बॉस, मैं मोको आपकी सेवा में तैयार हूँ।" }
+                displayReply = parsed.displayReply.ifBlank { "${prefs.getAssistantName()} is ready for your next command." },
+                finalSpokenReply = parsed.spokenReply.ifBlank { "जी ${prefs.getUserName()}, मैं ${prefs.getAssistantName()} आपकी सेवा में तैयार हूँ।" }
             )
         }
+    }
+
+    private fun openInstalledApp(
+        appNameOrQuery: String,
+        customDisplay: String,
+        customSpoken: String
+    ): ActionExecutionResult {
+        val query = appNameOrQuery.trim()
+        val lower = query.lowercase()
+        val userName = prefs.getUserName()
+        val packageManager = appContext.packageManager
+
+        val knownPackages = mapOf(
+            "whatsapp" to listOf("com.whatsapp", "com.whatsapp.w4b"),
+            "youtube" to listOf("com.google.android.youtube"),
+            "instagram" to listOf("com.instagram.android"),
+            "chrome" to listOf("com.android.chrome"),
+            "gmail" to listOf("com.google.android.gm"),
+            "maps" to listOf("com.google.android.apps.maps"),
+            "telegram" to listOf("org.telegram.messenger"),
+            "facebook" to listOf("com.facebook.katana"),
+            "spotify" to listOf("com.spotify.music"),
+            "calculator" to listOf("com.google.android.calculator", "com.android.calculator2")
+        )
+
+        try {
+            if (lower.contains("camera") || lower.contains("कैमरा")) {
+                val camIntent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                launchActivityWithBackgroundSupport(camIntent, "Opening Camera", "Tap to open Camera")
+                return ActionExecutionResult(
+                    true,
+                    customDisplay.ifBlank { "APP LAUNCHER // Camera launched." },
+                    customSpoken.ifBlank { "जी $userName, कैमरा खोल दिया गया है।" }
+                )
+            }
+
+            // 1. Check known popular packages first
+            for ((key, pkgList) in knownPackages) {
+                if (lower.contains(key)) {
+                    for (pkg in pkgList) {
+                        val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            launchActivityWithBackgroundSupport(launchIntent, "Opening $query", "Tap to open $query")
+                            return ActionExecutionResult(
+                                true,
+                                customDisplay.ifBlank { "APP LAUNCHER // Opened $query ($pkg)." },
+                                customSpoken.ifBlank { "जी $userName, $query खोल दिया गया है।" }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. Search installed launcher apps by label
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val apps = packageManager.queryIntentActivities(mainIntent, 0)
+            val matchedApp = apps.firstOrNull { resolveInfo ->
+                val label = resolveInfo.loadLabel(packageManager).toString()
+                label.contains(query, ignoreCase = true) ||
+                    HindiTransliterator.namesMatch(query, label)
+            }
+            if (matchedApp != null) {
+                val pkg = matchedApp.activityInfo.packageName
+                val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
+                if (launchIntent != null) {
+                    val label = matchedApp.loadLabel(packageManager).toString()
+                    launchActivityWithBackgroundSupport(launchIntent, "Opening $label", "Tap to open $label")
+                    return ActionExecutionResult(
+                        true,
+                        customDisplay.ifBlank { "APP LAUNCHER // Opened $label." },
+                        customSpoken.ifBlank { "जी $userName, $label ऐप खोल दिया गया है।" }
+                    )
+                }
+            }
+
+            // 3. Fallback for web/deep-linkable apps (YouTube, Maps, Browser)
+            val webFallbackUri = when {
+                lower.contains("youtube") -> Uri.parse("https://www.youtube.com")
+                lower.contains("maps") -> Uri.parse("geo:0,0?q=")
+                lower.contains("chrome") || lower.contains("browser") -> Uri.parse("https://www.google.com")
+                else -> null
+            }
+            if (webFallbackUri != null) {
+                val webIntent = Intent(Intent.ACTION_VIEW, webFallbackUri)
+                launchActivityWithBackgroundSupport(webIntent, "Opening $query", "Tap to open $query")
+                return ActionExecutionResult(
+                    true,
+                    customDisplay.ifBlank { "APP LAUNCHER // Opened $query." },
+                    customSpoken.ifBlank { "जी $userName, $query खोल दिया गया है।" }
+                )
+            }
+        } catch (e: Exception) {
+            return ActionExecutionResult(
+                false,
+                "APP LAUNCH ERROR // Could not open $query: ${e.localizedMessage}",
+                "माफ़ कीजिए $userName, $query खोलने में समस्या आई है।"
+            )
+        }
+
+        return ActionExecutionResult(
+            false,
+            "APP NOT INSTALLED // '$query' was not found on this device.",
+            "माफ़ कीजिए $userName, '$query' नाम का ऐप आपके फोन में इंस्टॉल नहीं मिला।"
+        )
     }
 
     /**
