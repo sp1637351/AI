@@ -11,6 +11,7 @@ enum class SuaStatus {
 enum class DeviceActionType(val label: String, val codeTag: String) {
     CALL("VOICE CALL", "MOKO.CALL"),
     SMS("SEND SMS", "MOKO.SMS"),
+    WHATSAPP_MSG("WHATSAPP MSG", "MOKO.WHATSAPP"),
     FLASHLIGHT_ON("TORCH ON", "MOKO.TORCH.ON"),
     FLASHLIGHT_OFF("TORCH OFF", "MOKO.TORCH.OFF"),
     LOCK_PHONE("SCREEN LOCK", "MOKO.LOCK"),
@@ -44,11 +45,33 @@ enum class AiProviderType(val displayName: String, val defaultBaseUrl: String) {
 }
 
 enum class VoicePreset(val label: String, val pitch: Float, val speed: Float) {
-    SWEET("Sweet & Loving (प्यारी आवाज़)", 1.18f, 0.98f),
+    SWEET("Sweet & Loving (Kalpa Neural)", 1.15f, 1.0f),
     NATURAL("Warm & Natural", 1.04f, 1.03f),
-    ENERGETIC("Fast & Energetic", 1.10f, 1.16f),
-    CALM("Calm & Deep", 0.88f, 0.95f)
+    ENERGETIC("Fast & Energetic", 1.10f, 1.14f),
+    CALM("Calm & Smooth", 0.92f, 0.96f)
 }
+
+data class KalpaVoiceOption(
+    val id: String,
+    val name: String,
+    val subtitle: String
+)
+
+enum class ConfirmationStep {
+    SELECT_NUMBER,
+    CONFIRM_AND_DETAILS
+}
+
+data class PendingCommsConfirmation(
+    val actionType: DeviceActionType, // CALL, SMS, or WHATSAPP_MSG
+    val contactName: String,
+    val phoneNumbers: List<String>,
+    val selectedNumber: String = "",
+    val messageBody: String = "",
+    val scriptPreference: String = "", // "HINDI" or "ENGLISH"
+    val step: ConfirmationStep = ConfirmationStep.CONFIRM_AND_DETAILS,
+    val preferEnglishReply: Boolean = false
+)
 
 data class ParsedCommand(
     val action: DeviceActionType,

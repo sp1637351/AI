@@ -36,9 +36,26 @@ class SuaPreferences(context: Context) {
         private const val KEY_COMMAND_LOGS = "command_logs_v3_json"
         private const val KEY_MOKO_MEMORIES = "moko_memories_v1_json"
         private const val KEY_CUSTOM_COMMANDS = "custom_voice_commands_v1_json"
+        private const val KEY_KALPA_API_KEY_ENC = "kalpa_voice_api_key_enc_v1"
+        private const val KEY_KALPA_VOICE_ID = "kalpa_voice_id_v1"
         private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
 
         const val DEVELOPER_NAME = "MR. SHASHANK"
+        const val DEFAULT_KALPA_API_KEY = "sk-live-8d7644911c4cb82b45f6dff3126cb3ac903bc95307b5ba50"
+        const val DEFAULT_KALPA_VOICE_ID = "5e0c5704-590f-483b-b291-00a2415cb67e" // Kiara (Feminine Hindi & English)
+
+        val KALPA_VOICE_OPTIONS = listOf(
+            KalpaVoiceOption(
+                id = "5e0c5704-590f-483b-b291-00a2415cb67e",
+                name = "Kiara (Sweet Female)",
+                subtitle = "Kalpa Neural Hindi & English Voice"
+            ),
+            KalpaVoiceOption(
+                id = "dda5319f-3b81-4124-b69e-9241eb510b77",
+                name = "Wren (Human-Like)",
+                subtitle = "Expressive Conversational Voice"
+            )
+        )
 
         val SUPPORTED_GEMINI_MODELS = listOf(
             "gemini-3-flash-preview",
@@ -47,6 +64,34 @@ class SuaPreferences(context: Context) {
             "gpt-4o-mini",
             "claude-3-5-haiku-latest"
         )
+    }
+
+    fun getKalpaApiKey(): String {
+        val raw = prefs.getString(KEY_KALPA_API_KEY_ENC, "") ?: ""
+        if (raw.isNotBlank()) {
+            val dec = decryptString(raw).trim()
+            if (dec.isNotEmpty()) return dec
+        }
+        return DEFAULT_KALPA_API_KEY
+    }
+
+    fun saveKalpaApiKey(apiKey: String) {
+        val clean = apiKey.trim()
+        if (clean.isEmpty()) {
+            prefs.edit().remove(KEY_KALPA_API_KEY_ENC).apply()
+            return
+        }
+        val encrypted = encryptString(clean)
+        prefs.edit().putString(KEY_KALPA_API_KEY_ENC, encrypted).apply()
+    }
+
+    fun getKalpaVoiceId(): String {
+        return prefs.getString(KEY_KALPA_VOICE_ID, DEFAULT_KALPA_VOICE_ID)?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: DEFAULT_KALPA_VOICE_ID
+    }
+
+    fun setKalpaVoiceId(voiceId: String) {
+        prefs.edit().putString(KEY_KALPA_VOICE_ID, voiceId.trim().ifEmpty { DEFAULT_KALPA_VOICE_ID }).apply()
     }
 
     fun getSavedUserApiKey(): String {

@@ -258,4 +258,107 @@ object HindiTransliterator {
         }
         return Pair(false, trimmed)
     }
+
+    /**
+     * Converts Roman/Hinglish words into Hindi Devanagari when the user asks to type a WhatsApp/SMS in Hindi.
+     */
+    fun toHindiDevanagari(input: String): String {
+        val text = input.trim()
+        if (text.isEmpty()) return ""
+        // If already contains Devanagari characters, return as-is
+        if (text.any { it.code in 0x0900..0x097F }) return text
+
+        val dictionary = mapOf(
+            "namaste" to "नमस्ते",
+            "hello" to "हेलो",
+            "hi" to "हाय",
+            "kaise" to "कैसे",
+            "kaisa" to "कैसा",
+            "kaisi" to "कैसी",
+            "ho" to "हो",
+            "hai" to "है",
+            "hain" to "हैं",
+            "main" to "मैं",
+            "mai" to "मैं",
+            "aap" to "आप",
+            "tum" to "तुम",
+            "kahan" to "कहाँ",
+            "kaha" to "कहाँ",
+            "kab" to "कब",
+            "kya" to "क्या",
+            "aa" to "आ",
+            "raha" to "रहा",
+            "rahi" to "रही",
+            "hu" to "हूँ",
+            "hoon" to "हूँ",
+            "ghar" to "घर",
+            "par" to "पर",
+            "pe" to "पे",
+            "abhi" to "अभी",
+            "baad" to "बाद",
+            "me" to "में",
+            "mein" to "में",
+            "call" to "कॉल",
+            "karo" to "करो",
+            "karna" to "करना",
+            "jaldi" to "जल्दी",
+            "aao" to "आओ",
+            "milte" to "मिलते",
+            "kal" to "कल",
+            "aaj" to "आज",
+            "haan" to "हाँ",
+            "nahi" to "नहीं",
+            "ok" to "ओके",
+            "theek" to "ठीक",
+            "thik" to "ठीक",
+            "bhai" to "भाई",
+            "dost" to "दोस्त",
+            "good" to "गुड",
+            "morning" to "मॉर्निंग",
+            "night" to "नाइट"
+        )
+
+        return text.split(Regex("\\s+")).joinToString(" ") { word ->
+            val clean = word.lowercase().replace(Regex("[^a-z]"), "")
+            dictionary[clean] ?: word
+        }
+    }
+
+    /**
+     * Formats a phone number digit-by-digit for clear voice readout ("नंबर बोलो" / "speak both numbers").
+     */
+    fun formatPhoneForSpeech(phoneNumber: String, inEnglish: Boolean): String {
+        val hindiDigits = mapOf(
+            '0' to "ज़ीरो", '1' to "वन", '2' to "टू", '3' to "थ्री", '4' to "फोर",
+            '5' to "फाइव", '6' to "सिक्स", '7' to "सेवन", '8' to "एट", '9' to "नाइन", '+' to "प्लस"
+        )
+        return phoneNumber.trim().map { ch ->
+            if (inEnglish) {
+                ch.toString()
+            } else {
+                hindiDigits[ch] ?: ch.toString()
+            }
+        }.joinToString(" ")
+    }
+
+    /**
+     * Detects whether the user spoke in English vs Hindi/Hinglish so Moko replies in the same language.
+     */
+    fun isPrimarilyEnglish(input: String): Boolean {
+        val text = input.trim()
+        if (text.isEmpty()) return false
+        // Any Devanagari character means Hindi
+        if (text.any { it.code in 0x0900..0x097F }) return false
+
+        val lower = text.lowercase()
+        val hinglishMarkers = listOf(
+            "karo", "kholo", "laga", "lagao", "batao", "bhejo", "bhej", "mera", "meri",
+            "tumhara", "tera", "kya", "kaise", "kahan", "kitna", "kitni", "chalu", "band",
+            "badhao", "ghatao", "yaad", "rakhna", "rakho", "kisne", "banaya", "kaun",
+            "bolna", "bolo", "dono", "wala", "wali", "mein", "haan", "nahi", "ko ", " se ", " par "
+        )
+        if (hinglishMarkers.any { lower.contains(it) }) return false
+
+        return true
+    }
 }

@@ -49,14 +49,39 @@ object SuaStateRepository {
     private val _audioRmsDb = MutableStateFlow(0f)
     val audioRmsDb: StateFlow<Float> = _audioRmsDb.asStateFlow()
 
+    private val _pendingComms = MutableStateFlow<PendingCommsConfirmation?>(null)
+    val pendingComms: StateFlow<PendingCommsConfirmation?> = _pendingComms.asStateFlow()
+
+    @Volatile
+    var lastResolvedContactName: String = ""
+
+    @Volatile
+    var lastResolvedNumbers: List<String> = emptyList()
+
     @Volatile
     var lastWakeSessionTimestampMs: Long = 0L
+
+    fun setPendingComms(pending: PendingCommsConfirmation?) {
+        _pendingComms.value = pending
+        if (pending != null && pending.phoneNumbers.isNotEmpty()) {
+            lastResolvedContactName = pending.contactName
+            lastResolvedNumbers = pending.phoneNumbers
+        }
+    }
+
+    fun recordResolvedContact(name: String, numbers: List<String>) {
+        if (numbers.isNotEmpty()) {
+            lastResolvedContactName = name
+            lastResolvedNumbers = numbers
+        }
+    }
 
     fun markWakeWordDetected() {
         lastWakeSessionTimestampMs = System.currentTimeMillis()
     }
 
     fun isWithinWakeConversationWindow(windowMs: Long = 22_000L): Boolean {
+        if (_pendingComms.value != null) return true
         val elapsed = System.currentTimeMillis() - lastWakeSessionTimestampMs
         return lastWakeSessionTimestampMs > 0L && elapsed in 0..windowMs
     }

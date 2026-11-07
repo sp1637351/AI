@@ -2,19 +2,19 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Pitch-Black AMOLED with Sharp Neon Blue & Pure White Borders (Zero Blur, High Contrast)
-val SuaObsidian = Color(0xFF000000)        // Pure Pitch-Black AMOLED Background
-val SuaDeepNavy = Color(0xFF070B12)        // Crisp Obsidian Header/Bar Surface
-val SuaSurfaceCard = Color(0xFF0D131F)     // High-Contrast Sharp Card Surface
-val SuaSurfaceElevated = Color(0xFF151F30) // Elevated Interactive Button Surface
+// MOKO // Deep Purple & Neon Violet Glass Theme (Restored Previous Design)
+val SuaObsidian = Color(0xFF0A0614)        // Deep Violet-Black background
+val SuaDeepNavy = Color(0xFF140C26)        // Rich Royal Violet surface
+val SuaSurfaceCard = Color(0xFF1E1338)     // Translucent Violet Glass card surface
+val SuaSurfaceElevated = Color(0xFF28194B) // Elevated Amethyst glass
 
-val SuaCyan = Color(0xFF00F0FF)            // Razor-Sharp Electric Neon Cyan-Blue
-val SuaCyanDim = Color(0xFF0091EA)         // Deep Royal Neon Blue
-val SuaElectricBlue = Color(0xFF2979FF)    // Crisp Royal Blue Accent
-val SuaEmerald = Color(0xFF00E676)         // High-Visibility Online Emerald
-val SuaAmber = Color(0xFFFFB300)           // Crisp Warning / Standby Amber
-val SuaCrimson = Color(0xFFFF1744)         // Sharp Alert / Delete Red
+val SuaCyan = Color(0xFFD946EF)            // Electric Neon Magenta-Violet (Primary Accent)
+val SuaCyanDim = Color(0xFF86198F)         // Deep Fuchsia-Violet glow
+val SuaElectricBlue = Color(0xFF8B5CF6)    // Luminous Amethyst Violet (Secondary Accent)
+val SuaEmerald = Color(0xFF10B981)         // Online / Active Voice Emerald Green
+val SuaAmber = Color(0xFFF59E0B)           // Sleep / Standby Amber Gold
+val SuaCrimson = Color(0xFFF43F5E)         // Rose Crimson Alert / Delete
 
-val SuaTextPrimary = Color(0xFFFFFFFF)     // Pure Crisp White Text
-val SuaTextSecondary = Color(0xFFB0BEC5)   // Clear Silver-Grey Subtitle Text
-val SuaBorder = Color(0xFF29384D)          // Sharp Crisp Border Line
+val SuaTextPrimary = Color(0xFFFDF4FF)     // Crisp Lavender-White
+val SuaTextSecondary = Color(0xFFC4B5FD)   // Soft Violet-Silver
+val SuaBorder = Color(0xFF4C1D95)          // Neon Purple Glass Border

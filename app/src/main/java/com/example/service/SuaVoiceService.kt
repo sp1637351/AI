@@ -137,8 +137,8 @@ class SuaVoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = SuaPreferences(this)
-        brain = SuaBrain(prefs)
         controller = SuaDeviceController(this)
+        brain = SuaBrain(prefs, controller)
         SuaVoiceSpeaker.init(this)
         createNotificationChannel()
         initSpeechRecognizer()
@@ -517,7 +517,8 @@ class SuaVoiceService : Service() {
         val userName = prefs.getUserName()
         val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText, botName)
         val wakeRequired = fromMic && prefs.isWakeWordRequiredInBackground()
-        val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow()
+        val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow() ||
+            SuaStateRepository.pendingComms.value != null
 
         if (wakeRequired && !hasWakeWord && !inActiveWindow) {
             val ignoredHud = brain.sanitizeForHud(rawSpokenText)

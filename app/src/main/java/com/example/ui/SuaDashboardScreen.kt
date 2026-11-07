@@ -4,12 +4,19 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +44,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
@@ -88,9 +96,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -98,6 +108,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.DeviceActionType
+import com.example.data.PendingCommsConfirmation
 import com.example.data.SuaPreferences
 import com.example.data.SuaStatus
 import com.example.ui.theme.SuaAmber
@@ -132,6 +144,7 @@ fun SuaDashboardScreen(
     val isScreenLockedOverlay by viewModel.isScreenLockedOverlay.collectAsStateWithLifecycle()
     val commandLogs by viewModel.commandLogs.collectAsStateWithLifecycle()
     val memoryItems by viewModel.memoryItems.collectAsStateWithLifecycle()
+    val pendingComms by viewModel.pendingComms.collectAsStateWithLifecycle()
     val audioRms by viewModel.audioRmsDb.collectAsStateWithLifecycle()
     val hasApiKey by viewModel.hasEffectiveApiKey.collectAsStateWithLifecycle()
     val batteryPercent by viewModel.batteryPercent.collectAsStateWithLifecycle()
@@ -166,16 +179,26 @@ fun SuaDashboardScreen(
         }
     }
 
+    val violetGlassBrush = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                SuaCyan.copy(alpha = 0.78f),
+                SuaElectricBlue.copy(alpha = 0.65f),
+                SuaBorder.copy(alpha = 0.85f)
+            )
+        )
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = SuaObsidian,
+                drawerContainerColor = SuaDeepNavy,
                 drawerContentColor = SuaTextPrimary,
                 modifier = Modifier
                     .widthIn(max = 335.dp)
                     .fillMaxHeight()
-                    .border(1.5.dp, SuaCyan, RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
+                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(topEnd = 22.dp, bottomEnd = 22.dp))
             ) {
                 MokoSideDrawerContent(
                     assistantName = assistantName,
@@ -214,10 +237,22 @@ fun SuaDashboardScreen(
             }
         }
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            SuaObsidian,
+                            SuaDeepNavy,
+                            SuaObsidian
+                        )
+                    )
+                )
+        ) {
             Scaffold(
                 contentWindowInsets = WindowInsets.safeDrawing,
-                containerColor = SuaObsidian,
+                containerColor = Color.Transparent,
                 topBar = {
                     TopAppBar(
                         navigationIcon = {
@@ -232,9 +267,9 @@ fun SuaDashboardScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(42.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(SuaDeepNavy)
-                                        .border(1.5.dp, SuaCyan, RoundedCornerShape(10.dp)),
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(SuaSurfaceElevated.copy(alpha = 0.85f))
+                                        .border(1.2.dp, SuaCyan.copy(alpha = 0.7f), RoundedCornerShape(12.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
@@ -258,12 +293,12 @@ fun SuaDashboardScreen(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(SuaDeepNavy)
-                                            .border(1.dp, SuaCyan, RoundedCornerShape(6.dp))
+                                            .background(SuaCyan.copy(alpha = 0.16f))
+                                            .border(1.dp, SuaCyan.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "BY ${SuaPreferences.DEVELOPER_NAME}",
+                                            text = "KALPA AI VOICE",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SuaCyan,
                                             fontWeight = FontWeight.Bold
@@ -287,7 +322,7 @@ fun SuaDashboardScreen(
                                 onSelectOnline = { requestOnlineMode() },
                                 onSelectSleep = { viewModel.activateSleepMode() }
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             IconButton(
                                 onClick = onOpenSettings,
                                 modifier = Modifier.testTag("top_settings_button")
@@ -295,26 +330,38 @@ fun SuaDashboardScreen(
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "Open Settings & History",
-                                    tint = SuaTextPrimary
+                                    tint = SuaCyan
                                 )
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = SuaObsidian
+                            containerColor = Color.Transparent
                         )
                     )
                 },
                 bottomBar = {
-                    // Ultra-Sharp Bottom Voice + Message Bar
+                    // Deep Purple & Neon Violet Glass Bottom Voice + Message Bar
                     Surface(
-                        color = SuaObsidian,
+                        color = Color.Transparent,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.5.dp, SuaCyan, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                                .background(SuaDeepNavy)
+                                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            SuaSurfaceCard.copy(alpha = 0.96f),
+                                            SuaObsidian
+                                        )
+                                    )
+                                )
+                                .border(
+                                    1.2.dp,
+                                    violetGlassBrush,
+                                    RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+                                )
                                 .padding(horizontal = 14.dp, vertical = 12.dp)
                         ) {
                             Row(
@@ -322,7 +369,7 @@ fun SuaDashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                // 1. VOICE BUTTON (On/Off right on the bottom bar)
+                                // 1. VOICE BUTTON
                                 Button(
                                     onClick = {
                                         if (isBgRunning) {
@@ -334,15 +381,15 @@ fun SuaDashboardScreen(
                                     modifier = Modifier
                                         .height(52.dp)
                                         .border(
-                                            1.5.dp,
+                                            1.2.dp,
                                             if (isBgRunning) SuaEmerald else SuaCyan,
-                                            RoundedCornerShape(12.dp)
+                                            RoundedCornerShape(14.dp)
                                         )
                                         .testTag("bottom_voice_toggle_button"),
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (isBgRunning) SuaEmerald else SuaObsidian,
-                                        contentColor = if (isBgRunning) SuaObsidian else SuaCyan
+                                        containerColor = if (isBgRunning) SuaEmerald.copy(alpha = 0.22f) else SuaSurfaceElevated,
+                                        contentColor = if (isBgRunning) SuaEmerald else SuaCyan
                                     )
                                 ) {
                                     Icon(
@@ -358,7 +405,7 @@ fun SuaDashboardScreen(
                                     )
                                 }
 
-                                // 2. MESSAGE INPUT FIELD
+                                // 2. MESSAGE INPUT FIELD (100% English placeholder)
                                 OutlinedTextField(
                                     value = commandInput,
                                     onValueChange = { commandInput = it },
@@ -367,7 +414,7 @@ fun SuaDashboardScreen(
                                         .testTag("command_input_field"),
                                     placeholder = {
                                         Text(
-                                            text = "Message $assistantName (e.g. Call Rahul, Open WhatsApp)...",
+                                            text = "Ask $assistantName (Call, SMS, WhatsApp)...",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = SuaTextSecondary,
                                             maxLines = 1,
@@ -375,7 +422,7 @@ fun SuaDashboardScreen(
                                         )
                                     },
                                     singleLine = true,
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                                     keyboardActions = KeyboardActions(
                                         onSend = {
@@ -387,11 +434,11 @@ fun SuaDashboardScreen(
                                     ),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = SuaCyan,
-                                        unfocusedBorderColor = SuaTextPrimary,
+                                        unfocusedBorderColor = SuaBorder,
                                         focusedTextColor = SuaTextPrimary,
                                         unfocusedTextColor = SuaTextPrimary,
-                                        focusedContainerColor = SuaObsidian,
-                                        unfocusedContainerColor = SuaObsidian
+                                        focusedContainerColor = SuaObsidian.copy(alpha = 0.78f),
+                                        unfocusedContainerColor = SuaObsidian.copy(alpha = 0.65f)
                                     )
                                 )
 
@@ -405,9 +452,8 @@ fun SuaDashboardScreen(
                                     },
                                     modifier = Modifier
                                         .size(52.dp)
-                                        .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(12.dp))
                                         .testTag("send_command_button"),
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     contentPadding = PaddingValues(0.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = SuaCyan,
@@ -424,34 +470,31 @@ fun SuaDashboardScreen(
                     }
                 }
             ) { innerPadding ->
-                // ULTRA-CLEAN MAIN SCREEN: Only Center Voice Orb, Status/Response Card & Fast Touch Action!
-                // (All History & Memory Vault items are inside Settings as requested)
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(SuaObsidian)
                         .padding(innerPadding)
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Top Identity & Quick Settings/History Bar
+                    // Top Violet Glass Identity & Settings Bar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .widthIn(max = 600.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(SuaDeepNavy)
-                            .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(SuaSurfaceCard.copy(alpha = 0.85f))
+                            .border(1.dp, violetGlassBrush, RoundedCornerShape(16.dp))
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
                             Text(
-                                text = "USER: ${userName.uppercase()}",
-                                style = MaterialTheme.typography.labelLarge,
+                                text = "USER: ${userName.uppercase()} • DEV: ${SuaPreferences.DEVELOPER_NAME}",
+                                style = MaterialTheme.typography.labelMedium,
                                 color = SuaTextPrimary,
                                 fontWeight = FontWeight.Bold
                             )
@@ -464,8 +507,8 @@ fun SuaDashboardScreen(
 
                         OutlinedButton(
                             onClick = onOpenSettings,
-                            shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan),
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan.copy(alpha = 0.7f)),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.testTag("main_open_history_settings_btn")
                         ) {
@@ -473,11 +516,11 @@ fun SuaDashboardScreen(
                                 imageVector = Icons.Default.History,
                                 contentDescription = "Open History & Settings",
                                 tint = SuaCyan,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "HISTORY (${commandLogs.size}) & SETTINGS",
+                                text = "HISTORY (${commandLogs.size})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SuaTextPrimary,
                                 fontWeight = FontWeight.Bold
@@ -485,10 +528,18 @@ fun SuaDashboardScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    // Active Call / SMS / WhatsApp Multi-Number & Hindi/English Confirmation Card
+                    AnimatedVisibility(visible = pendingComms != null) {
+                        pendingComms?.let { activePending ->
+                            PendingCommsConfirmationCard(
+                                pending = activePending,
+                                onSelectCommand = { viewModel.executeCommandText(it) }
+                            )
+                        }
+                    }
 
-                    // CENTER SHARP NEON BLUE VOICE ORB + RESPONSE HUD CARD
-                    SharpNeonBlueOrbCard(
+                    // RESTORED DEEP PURPLE & NEON VIOLET GLASS ORB CARD
+                    NeonVioletGlassOrbCard(
                         assistantName = assistantName,
                         userName = userName,
                         status = status,
@@ -504,10 +555,11 @@ fun SuaDashboardScreen(
                                 requestOnlineMode()
                             }
                         },
-                        onTestVoice = { viewModel.testVoiceGreeting() }
+                        onTestVoice = { viewModel.testVoiceGreeting() },
+                        onQuickCommand = { viewModel.executeCommandText(it) }
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
             }
 
@@ -526,6 +578,132 @@ fun SuaDashboardScreen(
 }
 
 @Composable
+private fun PendingCommsConfirmationCard(
+    pending: PendingCommsConfirmation,
+    onSelectCommand: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = SuaSurfaceElevated)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.5.dp, SuaAmber, RoundedCornerShape(18.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = null,
+                        tint = SuaAmber,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "CONFIRM ${pending.actionType.label.uppercase()} • ${pending.contactName.uppercase()}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = SuaAmber,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                Text(
+                    text = "Cancel",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = SuaCrimson,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSelectCommand("Cancel") }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            if (pending.phoneNumbers.size > 1) {
+                Text(
+                    text = "Saved Numbers: (1) ${pending.phoneNumbers[0]}  •  (2) ${pending.phoneNumbers[1]}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    QuickGlassChip("1st Number", onClick = { onSelectCommand("First number") })
+                    QuickGlassChip("2nd Number", onClick = { onSelectCommand("Second number") })
+                    QuickGlassChip("Speak Both Numbers", onClick = { onSelectCommand("Speak both numbers") })
+                }
+            } else if (pending.phoneNumbers.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Number: ${pending.phoneNumbers.first()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SuaTextPrimary
+                    )
+                    QuickGlassChip("Speak Number", onClick = { onSelectCommand("Speak both numbers") })
+                }
+            }
+
+            if (pending.actionType == DeviceActionType.SMS || pending.actionType == DeviceActionType.WHATSAPP_MSG) {
+                Text(
+                    text = "Choose Message Language (or speak your message directly):",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaCyan
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    QuickGlassChip("Type in Hindi", onClick = { onSelectCommand("In Hindi") })
+                    QuickGlassChip("Type in English", onClick = { onSelectCommand("In English") })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickGlassChip(
+    label: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(SuaCyan.copy(alpha = 0.16f))
+            .border(1.dp, SuaCyan.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = SuaTextPrimary,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
 private fun OnlineSleepSegmentedSwitch(
     isOnline: Boolean,
     onSelectOnline: () -> Unit,
@@ -533,12 +711,12 @@ private fun OnlineSleepSegmentedSwitch(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(SuaDeepNavy)
+            .clip(RoundedCornerShape(12.dp))
+            .background(SuaSurfaceElevated.copy(alpha = 0.9f))
             .border(
-                width = 1.5.dp,
-                color = if (isOnline) SuaEmerald else SuaTextPrimary,
-                shape = RoundedCornerShape(10.dp)
+                width = 1.2.dp,
+                color = if (isOnline) SuaEmerald.copy(alpha = 0.8f) else SuaBorder,
+                shape = RoundedCornerShape(12.dp)
             )
             .padding(3.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -546,7 +724,7 @@ private fun OnlineSleepSegmentedSwitch(
         // ONLINE PILL BUTTON
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(9.dp))
                 .background(if (isOnline) SuaEmerald else Color.Transparent)
                 .clickable {
                     if (!isOnline) onSelectOnline()
@@ -572,10 +750,10 @@ private fun OnlineSleepSegmentedSwitch(
             }
         }
 
-        // SLEEP PILL BUTTON (When in Sleep mode, tapping it also toggles Online as requested!)
+        // SLEEP PILL BUTTON
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(9.dp))
                 .background(if (!isOnline) SuaCyanDim else Color.Transparent)
                 .clickable {
                     if (isOnline) {
@@ -608,7 +786,7 @@ private fun OnlineSleepSegmentedSwitch(
 }
 
 @Composable
-private fun SharpNeonBlueOrbCard(
+private fun NeonVioletGlassOrbCard(
     assistantName: String,
     userName: String,
     status: SuaStatus,
@@ -618,35 +796,74 @@ private fun SharpNeonBlueOrbCard(
     lastReply: String,
     memoryCount: Int,
     onToggleOnlineSleep: () -> Unit,
-    onTestVoice: () -> Unit
+    onTestVoice: () -> Unit,
+    onQuickCommand: (String) -> Unit
 ) {
-    val activeBorderColor = when {
+    val infiniteTransition = rememberInfiniteTransition(label = "violet_orb_pulse")
+    val ringRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 12000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "orb_rotation"
+    )
+    val glowPulse by infiniteTransition.animateFloat(
+        initialValue = 0.88f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "orb_glow"
+    )
+
+    val activeAccentColor = when {
         status == SuaStatus.SPEAKING -> SuaEmerald
         status == SuaStatus.PROCESSING -> SuaAmber
         isOnline -> SuaCyan
-        else -> SuaTextPrimary
+        else -> SuaElectricBlue
+    }
+
+    val glassCardBrush = remember(activeAccentColor) {
+        Brush.linearGradient(
+            colors = listOf(
+                activeAccentColor.copy(alpha = 0.75f),
+                SuaElectricBlue.copy(alpha = 0.55f),
+                SuaBorder.copy(alpha = 0.7f)
+            )
+        )
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 600.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = SuaObsidian)
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.92f))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(SuaObsidian)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            SuaSurfaceElevated.copy(alpha = 0.7f),
+                            SuaSurfaceCard.copy(alpha = 0.95f),
+                            SuaObsidian.copy(alpha = 0.92f)
+                        )
+                    )
+                )
                 .border(
-                    width = 2.dp,
-                    color = activeBorderColor,
-                    shape = RoundedCornerShape(20.dp)
+                    width = 1.5.dp,
+                    brush = glassCardBrush,
+                    shape = RoundedCornerShape(26.dp)
                 )
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Status Row inside Card
+            // Top Status Row inside Violet Glass Card
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -654,33 +871,33 @@ private fun SharpNeonBlueOrbCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SuaDeepNavy)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(activeAccentColor.copy(alpha = 0.15f))
                         .border(
-                            1.5.dp,
-                            if (isOnline) SuaEmerald else SuaTextPrimary,
-                            RoundedCornerShape(8.dp)
+                            1.dp,
+                            activeAccentColor.copy(alpha = 0.65f),
+                            RoundedCornerShape(10.dp)
                         )
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = when {
                             status == SuaStatus.SPEAKING -> "${assistantName.uppercase()} SPEAKING..."
-                            status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} PROCESSING..."
+                            status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} THINKING..."
                             isOnline -> "ONLINE • SAY 'OK ${assistantName.uppercase()}'"
                             else -> "SLEEP MODE • TAP ORB TO WAKE"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (isOnline) SuaEmerald else SuaTextPrimary,
+                        color = activeAccentColor,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
 
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SuaDeepNavy)
-                        .border(1.dp, SuaCyan, RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SuaCyan.copy(alpha = 0.14f))
+                        .border(1.dp, SuaCyan.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
                         .clickable { onTestVoice() }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                         .testTag("orb_test_voice_badge")
@@ -688,13 +905,13 @@ private fun SharpNeonBlueOrbCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.RecordVoiceOver,
-                            contentDescription = "Test Sweet Voice",
+                            contentDescription = "Test Kalpa AI Voice",
                             tint = SuaCyan,
                             modifier = Modifier.size(14.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = "SWEET VOICE • $memoryCount MEM",
+                            text = "KALPA VOICE • $memoryCount MEM",
                             style = MaterialTheme.typography.labelSmall,
                             color = SuaTextPrimary,
                             fontWeight = FontWeight.Bold
@@ -703,16 +920,15 @@ private fun SharpNeonBlueOrbCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // SHARP PITCH-BLACK & NEON BLUE INTERACTIVE ORB (Instant Touch Response, Zero Blur)
+            // DEEP PURPLE & NEON VIOLET GLASS VOICE ORB
             val normalizedRms = ((audioRms + 2f) / 12f).coerceIn(0f, 1f)
 
             Box(
                 modifier = Modifier
-                    .size(190.dp)
+                    .size(200.dp)
                     .clip(CircleShape)
-                    .background(SuaObsidian)
                     .clickable { onToggleOnlineSleep() }
                     .testTag("central_mic_orb"),
                 contentAlignment = Alignment.Center
@@ -721,62 +937,75 @@ private fun SharpNeonBlueOrbCard(
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val maxRadius = size.minDimension / 2f
 
-                    // Outer crisp white precision ring
+                    // Soft radial neon violet ambient halo
                     drawCircle(
-                        color = Color.White,
-                        radius = maxRadius * 0.96f,
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                activeAccentColor.copy(alpha = 0.34f),
+                                SuaElectricBlue.copy(alpha = 0.14f),
+                                Color.Transparent
+                            ),
+                            center = center,
+                            radius = maxRadius * glowPulse.coerceAtMost(1f)
+                        ),
+                        radius = maxRadius,
+                        center = center
+                    )
+
+                    // Outer Neon Violet Glass Ring
+                    drawCircle(
+                        color = activeAccentColor.copy(alpha = 0.65f),
+                        radius = maxRadius * 0.92f,
                         center = center,
                         style = Stroke(width = 2.dp.toPx())
                     )
 
-                    // Second dynamic Neon Blue ring reacting to live voice RMS
-                    val rmsScale = if (isOnline) (0.78f + normalizedRms * 0.14f) else 0.78f
+                    // Rotating Cyber Violet Arcs
+                    rotate(degrees = ringRotation, pivot = center) {
+                        drawArc(
+                            color = SuaCyan,
+                            startAngle = 15f,
+                            sweepAngle = 70f,
+                            useCenter = false,
+                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                        drawArc(
+                            color = SuaElectricBlue,
+                            startAngle = 195f,
+                            sweepAngle = 70f,
+                            useCenter = false,
+                            style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+
+                    // Dynamic Voice-Reactive Ring
+                    val rmsScale = if (isOnline) (0.72f + normalizedRms * 0.14f) else 0.72f
                     drawCircle(
-                        color = activeBorderColor,
+                        color = activeAccentColor,
                         radius = maxRadius * rmsScale,
                         center = center,
-                        style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
                     )
 
-                    // 4 crisp tactical crosshair ticks (0, 90, 180, 270 degrees)
-                    val tickOuter = maxRadius * 0.95f
-                    val tickInner = maxRadius * 0.85f
-                    drawLine(
-                        color = SuaCyan,
-                        start = Offset(center.x, center.y - tickOuter),
-                        end = Offset(center.x, center.y - tickInner),
-                        strokeWidth = 3.dp.toPx()
-                    )
-                    drawLine(
-                        color = SuaCyan,
-                        start = Offset(center.x, center.y + tickInner),
-                        end = Offset(center.x, center.y + tickOuter),
-                        strokeWidth = 3.dp.toPx()
-                    )
-                    drawLine(
-                        color = SuaCyan,
-                        start = Offset(center.x - tickOuter, center.y),
-                        end = Offset(center.x - tickInner, center.y),
-                        strokeWidth = 3.dp.toPx()
-                    )
-                    drawLine(
-                        color = SuaCyan,
-                        start = Offset(center.x + tickInner, center.y),
-                        end = Offset(center.x + tickOuter, center.y),
-                        strokeWidth = 3.dp.toPx()
-                    )
-
-                    // Inner solid pitch-black core with sharp Neon border
+                    // Inner Deep Purple Glass Core
                     drawCircle(
-                        color = Color(0xFF050811),
-                        radius = maxRadius * 0.60f,
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                SuaSurfaceElevated,
+                                SuaDeepNavy,
+                                SuaObsidian
+                            ),
+                            center = center,
+                            radius = maxRadius * 0.58f
+                        ),
+                        radius = maxRadius * 0.58f,
                         center = center
                     )
                     drawCircle(
-                        color = if (isOnline) SuaCyan else Color.White,
-                        radius = maxRadius * 0.60f,
+                        color = activeAccentColor.copy(alpha = 0.9f),
+                        radius = maxRadius * 0.58f,
                         center = center,
-                        style = Stroke(width = 2.5.dp.toPx())
+                        style = Stroke(width = 2.dp.toPx())
                     )
                 }
 
@@ -784,8 +1013,8 @@ private fun SharpNeonBlueOrbCard(
                     Icon(
                         imageVector = if (isOnline) Icons.Default.Mic else Icons.Default.MicOff,
                         contentDescription = if (isOnline) "$assistantName Online" else "$assistantName Sleep Mode",
-                        tint = if (isOnline) SuaCyan else SuaTextPrimary,
-                        modifier = Modifier.size(40.dp)
+                        tint = activeAccentColor,
+                        modifier = Modifier.size(38.dp)
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -803,15 +1032,32 @@ private fun SharpNeonBlueOrbCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
-            // Sharp High-Contrast Live Transcript & Response Box (Pure Black + White/Neon Borders)
+            // Quick Action Chips Row (Strictly 100% English UI Labels)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                QuickGlassChip("Call Contact") { onQuickCommand("Call Khushi") }
+                QuickGlassChip("Send SMS") { onQuickCommand("Send SMS to Khushi") }
+                QuickGlassChip("WhatsApp Msg") { onQuickCommand("Send WhatsApp message to Khushi") }
+                QuickGlassChip("Speak Both Numbers") { onQuickCommand("Speak both numbers") }
+                QuickGlassChip("Flashlight") { onQuickCommand("Turn on flashlight") }
+                QuickGlassChip("Who Developed You?") { onQuickCommand("Who developed you?") }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Violet Glass Live Transcript & Response Panel
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(SuaDeepNavy)
-                    .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(SuaObsidian.copy(alpha = 0.72f))
+                    .border(1.2.dp, SuaBorder, RoundedCornerShape(18.dp))
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -821,13 +1067,13 @@ private fun SharpNeonBlueOrbCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "VOICE / COMMAND INPUT:",
+                        text = "LIVE VOICE / COMMAND:",
                         style = MaterialTheme.typography.labelSmall,
                         color = SuaCyan,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = "DEV: ${SuaPreferences.DEVELOPER_NAME}",
+                        text = "HINDI & ENGLISH VOICE READY",
                         style = MaterialTheme.typography.labelSmall,
                         color = SuaEmerald,
                         fontWeight = FontWeight.Bold
@@ -841,10 +1087,10 @@ private fun SharpNeonBlueOrbCard(
                     fontWeight = FontWeight.Bold
                 )
 
-                HorizontalDivider(color = SuaBorder, thickness = 1.dp)
+                HorizontalDivider(color = SuaBorder.copy(alpha = 0.6f), thickness = 1.dp)
 
                 Text(
-                    text = "${assistantName.uppercase()} RESPONSE FOR ${userName.uppercase()}:",
+                    text = "${assistantName.uppercase()} RESPONSE:",
                     style = MaterialTheme.typography.labelSmall,
                     color = SuaEmerald,
                     fontWeight = FontWeight.ExtraBold
@@ -889,7 +1135,11 @@ private fun MokoSideDrawerContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(SuaObsidian)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(SuaDeepNavy, SuaObsidian)
+                )
+            )
             .verticalScroll(rememberScrollState())
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -927,9 +1177,9 @@ private fun MokoSideDrawerContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SuaDeepNavy)
-                .border(1.5.dp, SuaCyan, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(SuaSurfaceCard)
+                .border(1.2.dp, SuaCyan.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -955,130 +1205,76 @@ private fun MokoSideDrawerContent(
             )
         }
 
-        // PRIMARY BUTTON: OPEN SETTINGS, MULTI-AI API, VOICE & HISTORY
+        // Primary Settings & History Button
         Button(
             onClick = onOpenFullSettings,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
-                .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(12.dp))
-                .testTag("open_settings_button"),
-            shape = RoundedCornerShape(12.dp),
+                .height(52.dp)
+                .testTag("drawer_open_settings_button"),
+            shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = SuaCyan,
                 contentColor = SuaObsidian
             )
         ) {
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = "Open Settings & History"
-            )
+            Icon(imageVector = Icons.Default.Key, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "SETTINGS, API, VOICE & HISTORY",
+                text = "SETTINGS, KALPA VOICE & HISTORY ($historyCount)",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.ExtraBold
             )
         }
 
-        // Quick Access to History & Memory inside Settings
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            OutlinedButton(
-                onClick = onOpenFullSettings,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = null,
-                    tint = SuaCyan,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("History ($historyCount)", color = SuaTextPrimary)
-            }
-
-            OutlinedButton(
-                onClick = onOpenFullSettings,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, SuaEmerald)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Psychology,
-                    contentDescription = null,
-                    tint = SuaEmerald,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Memory ($memoryCount)", color = SuaTextPrimary)
-            }
-        }
-
-        HorizontalDivider(color = SuaBorder)
-
-        // ONLINE vs SLEEP Mode Control inside Drawer
-        Text(
-            text = "BACKGROUND WAKE MODE ('OK ${assistantName.uppercase()}')",
-            style = MaterialTheme.typography.labelSmall,
-            color = SuaCyan,
-            fontWeight = FontWeight.Bold
-        )
+        // Online vs Sleep Mode Buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Button(
                 onClick = onSwitchToOnline,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isOnline) SuaEmerald else SuaDeepNavy,
+                    containerColor = if (isOnline) SuaEmerald else SuaSurfaceCard,
                     contentColor = if (isOnline) SuaObsidian else SuaTextPrimary
                 )
             ) {
-                Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("ONLINE", fontWeight = FontWeight.Bold)
+                Text("ONLINE", fontWeight = FontWeight.ExtraBold)
             }
 
             Button(
                 onClick = {
                     if (isOnline) onSwitchToSleep() else onSwitchToOnline()
                 },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (!isOnline) SuaCyanDim else SuaDeepNavy,
+                    containerColor = if (!isOnline) SuaCyanDim else SuaSurfaceCard,
                     contentColor = SuaTextPrimary
                 )
             ) {
-                Icon(
-                    imageVector = Icons.Default.Bedtime,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
+                Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("SLEEP", fontWeight = FontWeight.Bold)
+                Text(if (isOnline) "SLEEP" else "WAKE", fontWeight = FontWeight.ExtraBold)
             }
         }
 
         HorizontalDivider(color = SuaBorder)
 
-        // Hardware Controls inside Side Menu Drawer
+        // Hardware Controls
         Text(
-            text = "QUICK HARDWARE CONTROLS",
-            style = MaterialTheme.typography.labelSmall,
+            text = "HARDWARE CONTROLS",
+            style = MaterialTheme.typography.labelMedium,
             color = SuaCyan,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.ExtraBold
         )
 
         Row(
@@ -1089,39 +1285,45 @@ private fun MokoSideDrawerContent(
                 onClick = onToggleFlashlight,
                 modifier = Modifier
                     .weight(1f)
-                    .testTag("quick_flashlight_tile"),
-                shape = RoundedCornerShape(10.dp),
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
                 border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isFlashlightOn) SuaEmerald else SuaTextPrimary
+                    1.2.dp,
+                    if (isFlashlightOn) SuaAmber else SuaBorder
                 )
             ) {
                 Icon(
                     imageVector = if (isFlashlightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
-                    contentDescription = "Toggle Flashlight",
-                    tint = if (isFlashlightOn) SuaEmerald else SuaCyan,
-                    modifier = Modifier.size(18.dp)
+                    contentDescription = "Toggle Torch",
+                    tint = if (isFlashlightOn) SuaAmber else SuaCyan
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isFlashlightOn) "Torch ON" else "Torch OFF", color = SuaTextPrimary)
+                Text(
+                    text = if (isFlashlightOn) "TORCH ON" else "TORCH OFF",
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             OutlinedButton(
                 onClick = onLockPhone,
                 modifier = Modifier
                     .weight(1f)
-                    .testTag("quick_lock_tile"),
-                shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, SuaTextPrimary)
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.2.dp, SuaCrimson)
             ) {
                 Icon(
                     imageVector = Icons.Default.Lock,
-                    contentDescription = "Lock Phone",
-                    tint = SuaAmber,
-                    modifier = Modifier.size(18.dp)
+                    contentDescription = "Lock Screen",
+                    tint = SuaCrimson
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Lock Phone", color = SuaTextPrimary)
+                Text(
+                    text = "LOCK",
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -1129,9 +1331,9 @@ private fun MokoSideDrawerContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SuaDeepNavy)
-                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(SuaSurfaceCard)
+                .border(1.dp, SuaBorder, RoundedCornerShape(14.dp))
                 .padding(12.dp)
         ) {
             Row(
@@ -1143,12 +1345,12 @@ private fun MokoSideDrawerContent(
                         imageVector = Icons.Default.BrightnessHigh,
                         contentDescription = null,
                         tint = SuaCyan,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Brightness", style = MaterialTheme.typography.bodyMedium, color = SuaTextPrimary)
+                    Text("Brightness", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
                 }
-                Text("$brightnessPercent%", style = MaterialTheme.typography.labelLarge, color = SuaCyan)
+                Text("$brightnessPercent%", color = SuaCyan, fontWeight = FontWeight.ExtraBold)
             }
             Slider(
                 value = brightnessPercent.toFloat(),
@@ -1157,7 +1359,8 @@ private fun MokoSideDrawerContent(
                 valueRange = 5f..100f,
                 colors = SliderDefaults.colors(
                     thumbColor = SuaCyan,
-                    activeTrackColor = SuaCyan
+                    activeTrackColor = SuaCyan,
+                    inactiveTrackColor = SuaBorder
                 )
             )
         }
@@ -1166,9 +1369,9 @@ private fun MokoSideDrawerContent(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SuaDeepNavy)
-                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(SuaSurfaceCard)
+                .border(1.dp, SuaBorder, RoundedCornerShape(14.dp))
                 .padding(12.dp)
         ) {
             Row(
@@ -1179,13 +1382,13 @@ private fun MokoSideDrawerContent(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = null,
-                        tint = SuaElectricBlue,
-                        modifier = Modifier.size(16.dp)
+                        tint = SuaEmerald,
+                        modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Sound Volume", style = MaterialTheme.typography.bodyMedium, color = SuaTextPrimary)
+                    Text("System Volume", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
                 }
-                Text("$volumePercent%", style = MaterialTheme.typography.labelLarge, color = SuaElectricBlue)
+                Text("$volumePercent%", color = SuaEmerald, fontWeight = FontWeight.ExtraBold)
             }
             Slider(
                 value = volumePercent.toFloat(),
@@ -1193,25 +1396,26 @@ private fun MokoSideDrawerContent(
                 onValueChangeFinished = onVolumeCommit,
                 valueRange = 0f..100f,
                 colors = SliderDefaults.colors(
-                    thumbColor = SuaElectricBlue,
-                    activeTrackColor = SuaElectricBlue
+                    thumbColor = SuaEmerald,
+                    activeTrackColor = SuaEmerald,
+                    inactiveTrackColor = SuaBorder
                 )
             )
         }
 
-        // Media Transport Controls
+        // Media Deck
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(SuaDeepNavy)
-                .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(SuaSurfaceCard)
+                .border(1.dp, SuaBorder, RoundedCornerShape(14.dp))
                 .padding(8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { onExecuteCommand("Previous song") }) {
-                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous Track", tint = SuaTextPrimary)
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = SuaTextPrimary)
             }
             IconButton(
                 onClick = {
@@ -1220,20 +1424,59 @@ private fun MokoSideDrawerContent(
             ) {
                 Icon(
                     imageVector = if (isMusicPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = "Play or Pause Music",
+                    contentDescription = "Play or Pause",
                     tint = SuaCyan
                 )
             }
             IconButton(onClick = { onExecuteCommand("Next song") }) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next Track", tint = SuaTextPrimary)
+                Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = SuaTextPrimary)
             }
         }
 
+        // Quick App Launchers & Voice Actions (100% English UI)
         Text(
-            text = "API Status: ${if (hasApiKey) "AI Key Linked" else "Offline Hardware Mode"} • Dev: ${SuaPreferences.DEVELOPER_NAME}",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (hasApiKey) SuaEmerald else SuaTextSecondary
+            text = "VOICE APP LAUNCHER & ACTIONS",
+            style = MaterialTheme.typography.labelMedium,
+            color = SuaCyan,
+            fontWeight = FontWeight.ExtraBold
         )
+
+        val quickVoiceActions = listOf(
+            "Open WhatsApp" to "Open WhatsApp",
+            "Open YouTube" to "Open YouTube",
+            "Open Instagram" to "Open Instagram",
+            "Open Camera" to "Open Camera",
+            "Send WhatsApp Msg" to "Send WhatsApp message to Khushi",
+            "Speak Both Numbers" to "Speak both numbers",
+            "Who Developed You?" to "Who developed you?",
+            "Battery Status" to "Check battery status"
+        )
+
+        quickVoiceActions.chunked(2).forEach { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                pair.forEach { (label, cmd) ->
+                    OutlinedButton(
+                        onClick = { onExecuteCommand(cmd) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan.copy(alpha = 0.65f)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SuaTextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1243,37 +1486,67 @@ private fun SuaScreenLockOverlay(onUnlock: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(SuaObsidian)
-            .clickable { onUnlock() },
+            .clickable(enabled = false) {},
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .padding(32.dp)
-                .border(2.dp, SuaCyan, RoundedCornerShape(20.dp))
-                .background(SuaDeepNavy)
                 .padding(28.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(SuaSurfaceCard)
+                .border(2.dp, SuaCrimson, RoundedCornerShape(24.dp))
+                .padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = "Locked",
-                tint = SuaCyan,
-                modifier = Modifier.size(64.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(SuaObsidian)
+                    .border(2.dp, SuaCrimson, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Screen Locked",
+                    tint = SuaCrimson,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+
             Text(
                 text = "SCREEN LOCKED",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 color = SuaTextPrimary,
                 fontWeight = FontWeight.ExtraBold
             )
-            Spacer(modifier = Modifier.height(8.dp))
+
             Text(
-                text = "Tap anywhere to unlock display",
+                text = "Background voice control remains active. Say any command or tap below to unlock.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = SuaCyan,
+                color = SuaTextSecondary,
                 textAlign = TextAlign.Center
             )
+
+            Button(
+                onClick = onUnlock,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("unlock_overlay_button"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SuaCyan,
+                    contentColor = SuaObsidian
+                )
+            ) {
+                Text(
+                    text = "UNLOCK SCREEN",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
         }
     }
 }

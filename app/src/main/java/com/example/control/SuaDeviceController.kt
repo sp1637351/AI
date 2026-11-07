@@ -47,6 +47,7 @@ data class ContactResolutionResult(
     val found: Boolean,
     val displayName: String,
     val phoneNumber: String,
+    val allPhoneNumbers: List<String> = emptyList(),
     val missingContactsPermission: Boolean = false
 )
 
@@ -200,7 +201,7 @@ class SuaDeviceController(private val context: Context) {
             PermissionStatusItem(
                 id = "BATTERY_OPT",
                 title = "Unrestricted Background Battery",
-                subtitle = "Prevents Android from killing SUA while running in background",
+                subtitle = "Prevents Android from killing Moko while running in background",
                 isGranted = isIgnoringBatteryOptimizations(),
                 isSpecialSystemPermission = true
             )
@@ -212,6 +213,7 @@ class SuaDeviceController(private val context: Context) {
         return when (parsed.action) {
             DeviceActionType.CALL -> placePhoneCall(parsed.target, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.SMS -> sendSmsMessage(parsed.target, parsed.message, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.WHATSAPP_MSG -> sendWhatsAppMessage(parsed.target, parsed.message, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.FLASHLIGHT_ON -> setFlashlight(true, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.FLASHLIGHT_OFF -> setFlashlight(false, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.LOCK_PHONE -> lockPhoneScreen(parsed.displayReply, parsed.spokenReply)
@@ -300,7 +302,6 @@ class SuaDeviceController(private val context: Context) {
                 )
             }
 
-            // 1. Check known popular packages first
             for ((key, pkgList) in knownPackages) {
                 if (lower.contains(key)) {
                     for (pkg in pkgList) {
@@ -317,7 +318,6 @@ class SuaDeviceController(private val context: Context) {
                 }
             }
 
-            // 2. Search installed launcher apps by label
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
@@ -341,7 +341,6 @@ class SuaDeviceController(private val context: Context) {
                 }
             }
 
-            // 3. Fallback for web/deep-linkable apps (YouTube, Maps, Browser)
             val webFallbackUri = when {
                 lower.contains("youtube") -> Uri.parse("https://www.youtube.com")
                 lower.contains("maps") -> Uri.parse("geo:0,0?q=")
@@ -373,8 +372,7 @@ class SuaDeviceController(private val context: Context) {
     }
 
     /**
-     * Resolves a contact name (spoken in Hindi Devanagari like "राहुल" or English like "Rahul")
-     * or direct phone number. NEVER returns fake fallback phone numbers.
+     * Resolves ALL phone numbers for a contact name (spoken in Hindi or English) or direct number.
      */
     fun resolvePhoneNumber(targetNameOrNumber: String): ContactResolutionResult {
         val cleaned = targetNameOrNumber.trim()
@@ -382,79 +380,104 @@ class SuaDeviceController(private val context: Context) {
             return ContactResolutionResult(
                 found = false,
                 displayName = "Unknown",
-                phoneNumber = ""
+                phoneNumber = "",
+                allPhoneNumbers = emptyList()
             )
         }
 
         // Check if the user spoke an actual phone number (at least 7 digits)
         val digitsOnly = cleaned.replace(Regex("[^0-9+]"), "")
         if (digitsOnly.count { it.isDigit() } >= 7) {
+            SuaStateRepository.recordResolvedContact(digitsOnly, listOf(digitsOnly))
             return ContactResolutionResult(
                 found = true,
                 displayName = digitsOnly,
-                phoneNumber = digitsOnly
+                phoneNumber = digitsOnly,
+                allPhoneNumbers = listOf(digitsOnly)
             )
         }
 
-        // 1. Check user-saved SUA Speed Dial Contacts first (matches both English & Hindi names phonetically)
+        val collectedNumbers = mutableListOf<String>()
+        var matchedDisplayName = ""
+
+        // 1. Check user-saved Speed Dial Contacts
         val quickContacts: List<QuickContact> = prefs.getQuickContacts()
-        val matchedQuick = quickContacts.firstOrNull { qc ->
-            HindiTransliterator.namesMatch(cleaned, qc.name) ||
+        for (qc in quickContacts) {
+            if (HindiTransliterator.namesMatch(cleaned, qc.name) ||
                 HindiTransliterator.namesMatch(cleaned, qc.aliasTag)
-        }
-        if (matchedQuick != null && matchedQuick.phoneNumber.isNotBlank()) {
-            return ContactResolutionResult(
-                found = true,
-                displayName = matchedQuick.name,
-                phoneNumber = matchedQuick.phoneNumber
-            )
+            ) {
+                val norm = qc.phoneNumber.replace(Regex("[^0-9+]"), "")
+                if (norm.isNotEmpty() && !collectedNumbers.contains(norm)) {
+                    collectedNumbers.add(norm)
+                    if (matchedDisplayName.isEmpty()) matchedDisplayName = qc.name
+                }
+            }
         }
 
-        // 2. Search real Android Contacts using Devanagari-to-Roman phonetic matching
+        // 2. Search real Android Contacts and collect ALL numbers for matching contact
         val hasContactsPerm = hasPermission(Manifest.permission.READ_CONTACTS)
-        if (!hasContactsPerm) {
+        if (!hasContactsPerm && collectedNumbers.isEmpty()) {
             val romanLabel = HindiTransliterator.toRoman(cleaned).replaceFirstChar { it.uppercase() }
                 .ifEmpty { cleaned }
             return ContactResolutionResult(
                 found = false,
                 displayName = romanLabel,
                 phoneNumber = "",
+                allPhoneNumbers = emptyList(),
                 missingContactsPermission = true
             )
         }
 
-        try {
-            val projection = arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            )
-            appContext.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                projection,
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                while (cursor.moveToNext()) {
-                    val cName = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() ?: "" else ""
-                    val cNum = if (numIdx >= 0) cursor.getString(numIdx)?.trim() ?: "" else ""
-                    if (cName.isNotEmpty() && cNum.isNotEmpty() &&
-                        HindiTransliterator.namesMatch(cleaned, cName)
-                    ) {
-                        val normalized = cNum.replace(Regex("[^0-9+]"), "")
-                        if (normalized.isNotEmpty()) {
-                            return ContactResolutionResult(
-                                found = true,
-                                displayName = cName,
-                                phoneNumber = normalized
-                            )
+        if (hasContactsPerm) {
+            try {
+                val projection = arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                )
+                appContext.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                    val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    while (cursor.moveToNext()) {
+                        val cName = if (nameIdx >= 0) cursor.getString(nameIdx)?.trim() ?: "" else ""
+                        val cNum = if (numIdx >= 0) cursor.getString(numIdx)?.trim() ?: "" else ""
+                        if (cName.isNotEmpty() && cNum.isNotEmpty() &&
+                            HindiTransliterator.namesMatch(cleaned, cName)
+                        ) {
+                            val normalized = cNum.replace(Regex("[^0-9+]"), "")
+                            if (normalized.isNotEmpty()) {
+                                val last10 = normalized.takeLast(10)
+                                val alreadyPresent = collectedNumbers.any { it.takeLast(10) == last10 }
+                                if (!alreadyPresent) {
+                                    collectedNumbers.add(normalized)
+                                }
+                                if (matchedDisplayName.isEmpty()) {
+                                    matchedDisplayName = cName
+                                }
+                            }
                         }
                     }
                 }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
+        }
+
+        if (collectedNumbers.isNotEmpty()) {
+            val finalName = matchedDisplayName.ifEmpty {
+                HindiTransliterator.toRoman(cleaned).replaceFirstChar { it.uppercase() }.ifEmpty { cleaned }
+            }
+            SuaStateRepository.recordResolvedContact(finalName, collectedNumbers)
+            return ContactResolutionResult(
+                found = true,
+                displayName = finalName,
+                phoneNumber = collectedNumbers.first(),
+                allPhoneNumbers = collectedNumbers
+            )
         }
 
         val romanName = HindiTransliterator.toRoman(cleaned).replaceFirstChar { it.uppercase() }
@@ -463,6 +486,7 @@ class SuaDeviceController(private val context: Context) {
             found = false,
             displayName = romanName,
             phoneNumber = "",
+            allPhoneNumbers = emptyList(),
             missingContactsPermission = false
         )
     }
@@ -480,15 +504,13 @@ class SuaDeviceController(private val context: Context) {
             throw e
         }
 
-        // On Android 10+, if the service is in the background, also post a Full-Screen / Heads-Up
-        // Action Notification so the user can tap it if the OS suppresses background activity starts.
         if (!inForeground) {
             try {
                 val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     val ch = NotificationChannel(
                         ACTION_ALERT_CHANNEL_ID,
-                        "SUA Background Actions",
+                        "Moko Background Actions",
                         NotificationManager.IMPORTANCE_HIGH
                     )
                     nm.createNotificationChannel(ch)
@@ -526,13 +548,13 @@ class SuaDeviceController(private val context: Context) {
                 ActionExecutionResult(
                     success = false,
                     displayReply = "CONTACTS PERMISSION REQUIRED // Cannot look up '${resolution.displayName}'. Grant Contacts permission in Settings or add their number to Speed Dial.",
-                    finalSpokenReply = "माफ़ कीजिए सर, '${resolution.displayName}' का नंबर ढूँढने के लिए कॉन्टैक्ट परमिशन ऑन नहीं है। कृपया सेटिंग्स में परमिशन ऑन करें या स्पीड डायल में नंबर जोड़ें।"
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, '${resolution.displayName}' का नंबर ढूँढने के लिए कॉन्टैक्ट परमिशन ऑन नहीं है। कृपया सेटिंग्स में परमिशन ऑन करें।"
                 )
             } else {
                 ActionExecutionResult(
                     success = false,
-                    displayReply = "CONTACT NOT FOUND // No phone number found for '${resolution.displayName}' in Contacts or Speed Dial. Add their number in Settings -> Speed Dial first.",
-                    finalSpokenReply = "माफ़ कीजिए सर, '${resolution.displayName}' नाम का कोई नंबर आपके फोन कॉन्टैक्ट्स या स्पीड डायल में नहीं मिला। कृपया पहले सेटिंग्स में उनका नंबर सेव करें।"
+                    displayReply = "CONTACT NOT FOUND // No phone number found for '${resolution.displayName}' in Contacts or Speed Dial.",
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, '${resolution.displayName}' नाम का कोई नंबर आपके फोन कॉन्टैक्ट्स या स्पीड डायल में नहीं मिला।"
                 )
             }
         }
@@ -548,7 +570,7 @@ class SuaDeviceController(private val context: Context) {
             }
             launchActivityWithBackgroundSupport(
                 callIntent,
-                "SUA // Calling $displayName",
+                "Calling $displayName",
                 "Tap to place call to $displayName ($numberToDial)"
             )
 
@@ -557,21 +579,21 @@ class SuaDeviceController(private val context: Context) {
                     "CALLING // Connecting voice call to $displayName ($numberToDial)..."
                 }
                 val spoken = customSpoken.ifBlank {
-                    "जी सर, $displayName को कॉल लगाया जा रहा है।"
+                    "जी ${prefs.getUserName()}, $displayName के नंबर $numberToDial पर कॉल लगाया जा रहा है।"
                 }
                 ActionExecutionResult(true, disp, spoken)
             } else {
                 ActionExecutionResult(
                     success = false,
                     displayReply = "CALL PERMISSION MISSING // Opened dialer for $displayName ($numberToDial). Grant 'Direct Telephony Control' in Settings for automatic calling.",
-                    finalSpokenReply = "कॉल परमिशन ऑन नहीं है सर, इसलिए मैंने $displayName का नंबर डायलर में खोल दिया है।"
+                    finalSpokenReply = "कॉल परमिशन ऑन नहीं है ${prefs.getUserName()}, इसलिए मैंने $displayName का नंबर डायलर में खोल दिया है।"
                 )
             }
         } catch (e: Exception) {
             ActionExecutionResult(
                 false,
                 "COMMS ERROR // Failed to initiate call to $displayName: ${e.localizedMessage ?: "Telephony unavailable"}",
-                "माफ़ कीजिए सर, $displayName को कॉल लगाने में तकनीकी समस्या आई है।"
+                "माफ़ कीजिए ${prefs.getUserName()}, $displayName को कॉल लगाने में तकनीकी समस्या आई है।"
             )
         }
     }
@@ -588,13 +610,13 @@ class SuaDeviceController(private val context: Context) {
                 ActionExecutionResult(
                     success = false,
                     displayReply = "CONTACTS PERMISSION REQUIRED // Cannot send SMS to '${resolution.displayName}' because Contacts permission is denied.",
-                    finalSpokenReply = "माफ़ कीजिए सर, कॉन्टैक्ट परमिशन के बिना '${resolution.displayName}' का नंबर नहीं मिल सका।"
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, कॉन्टैक्ट परमिशन के बिना '${resolution.displayName}' का नंबर नहीं मिल सका।"
                 )
             } else {
                 ActionExecutionResult(
                     success = false,
                     displayReply = "CONTACT NOT FOUND // Cannot send SMS: '${resolution.displayName}' was not found in Contacts or Speed Dial.",
-                    finalSpokenReply = "माफ़ कीजिए सर, '${resolution.displayName}' का नंबर आपके कॉन्टैक्ट्स या स्पीड डायल में नहीं मिला, इसलिए मैसेज नहीं भेजा गया।"
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, '${resolution.displayName}' का नंबर आपके कॉन्टैक्ट्स में नहीं मिला।"
                 )
             }
         }
@@ -622,7 +644,7 @@ class SuaDeviceController(private val context: Context) {
                     return ActionExecutionResult(
                         success = false,
                         displayReply = "SMS ERROR // SmsManager unavailable on this device.",
-                        finalSpokenReply = "माफ़ कीजिए सर, इस डिवाइस पर एसएमएस सर्विस उपलब्ध नहीं है।"
+                        finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, इस डिवाइस पर एसएमएस सर्विस उपलब्ध नहीं है।"
                     )
                 }
                 smsManager.sendTextMessage(numberToText, null, finalMsg, null, null)
@@ -630,14 +652,14 @@ class SuaDeviceController(private val context: Context) {
                     "SMS SENT // Dispatched to $displayName ($numberToText): \"$finalMsg\""
                 }
                 val spoken = customSpoken.ifBlank {
-                    "जी सर, $displayName को मैसेज भेज दिया गया है।"
+                    "जी ${prefs.getUserName()}, $displayName ($numberToText) को मैसेज भेज दिया गया है।"
                 }
                 ActionExecutionResult(true, disp, spoken)
             } catch (e: Exception) {
                 ActionExecutionResult(
                     success = false,
                     displayReply = "SMS FAILED // Could not send SMS to $displayName: ${e.localizedMessage ?: "Telephony error"}",
-                    finalSpokenReply = "माफ़ कीजिए सर, $displayName को मैसेज भेजने में एरर आ गया है।"
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, $displayName को मैसेज भेजने में एरर आ गया है।"
                 )
             }
         } else {
@@ -648,21 +670,76 @@ class SuaDeviceController(private val context: Context) {
                 }
                 launchActivityWithBackgroundSupport(
                     smsIntent,
-                    "SUA // Send SMS to $displayName",
+                    "Send SMS to $displayName",
                     "Tap to open SMS composer for $displayName"
                 )
                 ActionExecutionResult(
                     success = false,
-                    displayReply = "SMS PERMISSION OFF // Opened SMS app for $displayName ($numberToText). Grant SMS permission in Settings for direct sending.",
-                    finalSpokenReply = "एसएमएस परमिशन बंद है सर, इसलिए मैंने $displayName के लिए मैसेज ऐप खोल दिया है। सीधे भेजने के लिए सेटिंग्स में एसएमएस परमिशन ऑन करें।"
+                    displayReply = "SMS PERMISSION OFF // Opened SMS app for $displayName ($numberToText).",
+                    finalSpokenReply = "एसएमएस परमिशन बंद है ${prefs.getUserName()}, इसलिए मैंने $displayName के लिए मैसेज ऐप खोल दिया है।"
                 )
             } catch (e: Exception) {
                 ActionExecutionResult(
                     success = false,
-                    displayReply = "SMS ERROR // Neither SEND_SMS permission nor an SMS app is available: ${e.localizedMessage}",
-                    finalSpokenReply = "माफ़ कीजिए सर, एसएमएस परमिशन बंद है और मैसेज ऐप नहीं खुल सका।"
+                    displayReply = "SMS ERROR // ${e.localizedMessage}",
+                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, मैसेज ऐप नहीं खुल सका।"
                 )
             }
+        }
+    }
+
+    private fun sendWhatsAppMessage(
+        target: String,
+        messageBody: String,
+        customDisplay: String,
+        customSpoken: String
+    ): ActionExecutionResult {
+        val resolution = resolvePhoneNumber(target)
+        if (!resolution.found) {
+            return ActionExecutionResult(
+                success = false,
+                displayReply = "CONTACT NOT FOUND // Cannot send WhatsApp to '${resolution.displayName}' because their number was not found in Contacts.",
+                finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, '${resolution.displayName}' का नंबर आपके कॉन्टैक्ट्स में नहीं मिला।"
+            )
+        }
+
+        val displayName = resolution.displayName
+        val rawDigits = resolution.phoneNumber.replace(Regex("[^0-9]"), "")
+        val formattedWhatsAppPhone = when {
+            rawDigits.length == 10 -> "91$rawDigits"
+            rawDigits.length == 11 && rawDigits.startsWith("0") -> "91${rawDigits.drop(1)}"
+            else -> rawDigits
+        }
+        val finalMsg = messageBody.trim()
+
+        return try {
+            val encodedText = Uri.encode(finalMsg)
+            val waUri = Uri.parse("https://api.whatsapp.com/send?phone=$formattedWhatsAppPhone&text=$encodedText")
+            val waIntent = Intent(Intent.ACTION_VIEW, waUri)
+            val pm = appContext.packageManager
+            if (pm.getLaunchIntentForPackage("com.whatsapp") != null) {
+                waIntent.setPackage("com.whatsapp")
+            } else if (pm.getLaunchIntentForPackage("com.whatsapp.w4b") != null) {
+                waIntent.setPackage("com.whatsapp.w4b")
+            }
+            launchActivityWithBackgroundSupport(
+                waIntent,
+                "WhatsApp to $displayName",
+                "Tap to send WhatsApp message to $displayName"
+            )
+            val disp = customDisplay.ifBlank {
+                "WHATSAPP DISPATCH // Opened WhatsApp chat for $displayName (+$formattedWhatsAppPhone): \"$finalMsg\""
+            }
+            val spoken = customSpoken.ifBlank {
+                "जी ${prefs.getUserName()}, $displayName के नंबर पर व्हाट्सएप मैसेज तैयार कर दिया गया है।"
+            }
+            ActionExecutionResult(true, disp, spoken)
+        } catch (e: Exception) {
+            ActionExecutionResult(
+                success = false,
+                displayReply = "WHATSAPP ERROR // Could not open WhatsApp for $displayName: ${e.localizedMessage}",
+                finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, व्हाट्सएप खोलने में समस्या आई है।"
+            )
         }
     }
 

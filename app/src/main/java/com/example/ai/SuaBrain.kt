@@ -1,8 +1,11 @@
 package com.example.ai
 
+import com.example.control.SuaDeviceController
 import com.example.data.AiProviderType
+import com.example.data.ConfirmationStep
 import com.example.data.DeviceActionType
 import com.example.data.ParsedCommand
+import com.example.data.PendingCommsConfirmation
 import com.example.data.SuaPreferences
 import com.example.data.SuaStateRepository
 import com.example.util.HindiTransliterator
@@ -16,7 +19,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class SuaBrain(private val prefs: SuaPreferences) {
+class SuaBrain(
+    private val prefs: SuaPreferences,
+    private val controller: SuaDeviceController? = null
+) {
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(9, TimeUnit.SECONDS)
@@ -33,23 +39,43 @@ class SuaBrain(private val prefs: SuaPreferences) {
         val text = rawInput.trim()
         val userName = prefs.getUserName()
         val assistantName = prefs.getAssistantName()
+        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
 
         if (text.isEmpty()) {
             return@withContext ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "$assistantName is listening. Say 'Ok $assistantName' or 'Hi $assistantName' followed by your command.",
-                spokenReply = "जी $userName, मैं $assistantName बड़े प्यार से सुन रही हूँ। बताइए क्या काम करना है?"
+                spokenReply = if (speakEn) {
+                    "Yes $userName, I am $assistantName and I am listening closely. Tell me what you would like me to do."
+                } else {
+                    "जी $userName, मैं $assistantName बड़े प्यार से सुन रही हूँ। बताइए क्या काम करना है?"
+                }
             )
         }
 
-        // 0. Check User-Defined Custom Voice Commands first (exact or substring trigger match)
+        // 0A. Check if there is an active Multi-Step Call / SMS / WhatsApp Confirmation waiting for user reply
+        val activePending = SuaStateRepository.pendingComms.value
+        if (activePending != null) {
+            val pendingReply = handleActiveCommsConfirmation(text, activePending, userName, assistantName, speakEn)
+            if (pendingReply != null) {
+                return@withContext pendingReply
+            }
+        }
+
+        // 0B. Check if user is asking to read out / speak the contact phone numbers ("दोनों नंबर बोलो" / "नंबर बोलो" / "speak both numbers")
+        val readNumbersReply = parseSpeakPhoneNumbersIntent(text, userName, assistantName, speakEn)
+        if (readNumbersReply != null) {
+            return@withContext readNumbersReply
+        }
+
+        // 0C. Check User-Defined Custom Voice Commands (exact or substring trigger match)
         val customCmdMatch = matchCustomVoiceCommand(text, userName, assistantName)
         if (customCmdMatch != null) {
             return@withContext customCmdMatch
         }
 
         // 1. Check Developer Attribution ("किसने बनाया", "कौन डेवलप किया", "who developed you", etc.)
-        val devIdentityMatch = parseDeveloperAndIdentityIntent(text, userName, assistantName)
+        val devIdentityMatch = parseDeveloperAndIdentityIntent(text, userName, assistantName, speakEn)
         if (devIdentityMatch != null) {
             return@withContext devIdentityMatch
         }
@@ -60,7 +86,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return@withContext localMemoryCmd
         }
 
-        // 3. Check local Hardware & App Launch intents
+        // 3. Check local Hardware, App Launch, Call, SMS & WhatsApp intents
         val localMatch = parseHardwareIntentLocally(text, userName, assistantName)
         val apiKey = prefs.getEffectiveApiKey()
         val customUrl = prefs.getCustomApiUrl()
@@ -68,15 +94,26 @@ class SuaBrain(private val prefs: SuaPreferences) {
         // Fast-path unambiguous non-named hardware & app commands for instant <50ms response
         if (localMatch != null &&
             localMatch.action != DeviceActionType.CALL &&
-            localMatch.action != DeviceActionType.SMS
+            localMatch.action != DeviceActionType.SMS &&
+            localMatch.action != DeviceActionType.WHATSAPP_MSG
         ) {
             return@withContext localMatch
         }
 
-        // 4. For CALL, SMS, or open-ended queries: call the active AI Provider (Gemini / OpenAI / Claude / Custom Link)
+        // If local parser matched CALL, SMS, or WHATSAPP_MSG and we have a target name, run our interactive contact & confirmation flow!
+        if (localMatch != null &&
+            (localMatch.action == DeviceActionType.CALL ||
+                localMatch.action == DeviceActionType.SMS ||
+                localMatch.action == DeviceActionType.WHATSAPP_MSG) &&
+            localMatch.target.isNotBlank()
+        ) {
+            return@withContext initiateInteractiveCommsFlow(localMatch, text, userName, assistantName, speakEn)
+        }
+
+        // 4. For open-ended queries or complex CALL/SMS/WhatsApp phrasing: call the active AI Provider
         var lastApiFailure: AiCallOutcome.Failure? = null
         if (apiKey.isNotEmpty() || customUrl.isNotEmpty()) {
-            when (val outcome = callActiveAiProvider(text, apiKey, customUrl, userName, assistantName)) {
+            when (val outcome = callActiveAiProvider(text, apiKey, customUrl, userName, assistantName, speakEn)) {
                 is AiCallOutcome.Success -> {
                     val aiCmd = outcome.command
                     if (aiCmd.memoryFact.isNotBlank()) {
@@ -85,6 +122,12 @@ class SuaBrain(private val prefs: SuaPreferences) {
                             isAuto = true,
                             prefs = prefs
                         )
+                    }
+                    if (aiCmd.action == DeviceActionType.CALL ||
+                        aiCmd.action == DeviceActionType.SMS ||
+                        aiCmd.action == DeviceActionType.WHATSAPP_MSG
+                    ) {
+                        return@withContext initiateInteractiveCommsFlow(aiCmd, text, userName, assistantName, speakEn)
                     }
                     if (aiCmd.action == DeviceActionType.AI_CHAT && localMatch != null) {
                         return@withContext localMatch
@@ -97,9 +140,9 @@ class SuaBrain(private val prefs: SuaPreferences) {
             }
         }
 
-        // If local parser matched CALL or SMS, execute it offline
+        // If local parser matched CALL, SMS, or WHATSAPP_MSG, run interactive flow
         if (localMatch != null) {
-            return@withContext localMatch
+            return@withContext initiateInteractiveCommsFlow(localMatch, text, userName, assistantName, speakEn)
         }
 
         // Report AI error honestly if key/URL was configured
@@ -110,10 +153,18 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return@withContext ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "$prov API ERROR (HTTP $code) // $detail. Check your API Key or Endpoint Link in Settings.",
-                spokenReply = when (code) {
-                    400, 401, 403 -> "माफ़ कीजिए $userName, आपकी $prov एपीआई की या लिंक मान्य नहीं है। कृपया सेटिंग्स में जाकर अपनी एपीआई की चेक करें।"
-                    429 -> "माफ़ कीजिए $userName, आपकी एपीआई की का कोटा पूरा हो गया है।"
-                    else -> "माफ़ कीजिए $userName, एआई सर्वर से जुड़ने में समस्या आई है।"
+                spokenReply = if (speakEn) {
+                    when (code) {
+                        400, 401, 403 -> "Sorry $userName, your $prov API key or endpoint link is invalid. Please check your API key in Settings."
+                        429 -> "Sorry $userName, your API key quota has been exceeded."
+                        else -> "Sorry $userName, there was a network issue connecting to the AI server."
+                    }
+                } else {
+                    when (code) {
+                        400, 401, 403 -> "माफ़ कीजिए $userName, आपकी $prov एपीआई की या लिंक मान्य नहीं है। कृपया सेटिंग्स में जाकर अपनी एपीआई की चेक करें।"
+                        429 -> "माफ़ कीजिए $userName, आपकी एपीआई की का कोटा पूरा हो गया है।"
+                        else -> "माफ़ कीजिए $userName, एआई सर्वर से जुड़ने में समस्या आई है।"
+                    }
                 }
             )
         }
@@ -124,23 +175,463 @@ class SuaBrain(private val prefs: SuaPreferences) {
         return@withContext when {
             lower.contains("hello") || lower.contains("hi") || lower.contains("namaste") ||
                 text.contains("नमस्ते") || text.contains("हेलो") || lower.contains("kaise ho") ||
-                text.contains("कैसे हो") || text.contains("कैसी हो") -> {
+                lower.contains("how are you") || text.contains("कैसे हो") || text.contains("कैसी हो") -> {
                 val memGreeting = if (memories.isNotEmpty()) {
                     " Remembering ${memories.size} facts about $userName."
                 } else ""
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
                     displayReply = "$assistantName ONLINE // Hello $userName! Developed by ${SuaPreferences.DEVELOPER_NAME}.$memGreeting",
-                    spokenReply = "नमस्ते $userName! मैं आपकी प्यारी $assistantName एकदम ठीक हूँ और आपकी सेवा में हाज़िर हूँ। बताइए क्या काम करूँ?"
+                    spokenReply = if (speakEn) {
+                        "Hello $userName! I am your sweet assistant $assistantName, doing great and ready to help you. What can I do for you?"
+                    } else {
+                        "नमस्ते $userName! मैं आपकी प्यारी $assistantName एकदम ठीक हूँ और आपकी सेवा में हाज़िर हूँ। बताइए क्या काम करूँ?"
+                    }
                 )
             }
             else -> {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
-                    displayReply = "AI KEY REQUIRED // Hardware, App Launch & Memory work offline. For open AI chat (\"${sanitizeForHud(text)}\"), save your Gemini / ChatGPT / Claude / Custom API Key in Settings.",
-                    spokenReply = "जी $userName, फोन कंट्रोल और मेमोरी कमांड ऑफलाइन काम कर रहे हैं। किसी भी सवाल के एआई जवाब के लिए सेटिंग्स में अपनी एपीआई की सेव करें।"
+                    displayReply = "AI KEY REQUIRED // Hardware, Contacts, Calls, WhatsApp & Memory work offline. For open AI chat (\"${sanitizeForHud(text)}\"), save your Gemini / ChatGPT / Claude / Custom API Key in Settings.",
+                    spokenReply = if (speakEn) {
+                        "Yes $userName, phone controls, contacts, calling, messaging, and memory commands work offline. For open AI questions, please save your API key in Settings."
+                    } else {
+                        "जी $userName, फोन कंट्रोल, कॉल, मैसेज और मेमोरी कमांड ऑफलाइन काम कर रहे हैं। किसी भी सवाल के एआई जवाब के लिए सेटिंग्स में अपनी एपीआई की सेव करें।"
+                    }
                 )
             }
+        }
+    }
+
+    /**
+     * Initiates interactive Call / SMS / WhatsApp confirmation & multi-number selection.
+     * - For CALL:
+     *   - If 2+ numbers exist for the contact, speaks both numbers and asks which one to call.
+     *   - If 1 number exists, places the call immediately.
+     * - For SMS or WHATSAPP_MSG:
+     *   - Always confirms with the user whether to message that contact, reads out or offers to read numbers,
+     *     and asks whether to write the message in Hindi or English and what message to write.
+     */
+    private fun initiateInteractiveCommsFlow(
+        cmd: ParsedCommand,
+        rawText: String,
+        userName: String,
+        assistantName: String,
+        speakEn: Boolean
+    ): ParsedCommand {
+        val devCtrl = controller ?: return cmd
+        val rawTarget = cmd.target.trim()
+        if (rawTarget.isEmpty()) return cmd
+
+        val resolution = devCtrl.resolvePhoneNumber(rawTarget)
+        val allNums = resolution.allPhoneNumbers
+        val dispName = resolution.displayName.ifEmpty { rawTarget }
+
+        if (allNums.isEmpty()) {
+            // Contact not found yet -> let SuaDeviceController handle the permission/not-found message
+            return cmd
+        }
+
+        // Record resolved contact so "दोनों नंबर बोलो" / "नंबर बोलो" works anytime
+        SuaStateRepository.recordResolvedContact(dispName, allNums)
+
+        // Check if the user already specified Hindi or English script in their initial command
+        val detectedLang = detectExplicitLanguageChoice(rawText)
+
+        if (cmd.action == DeviceActionType.CALL) {
+            if (allNums.size > 1) {
+                val num1Speech = HindiTransliterator.formatPhoneForSpeech(allNums[0], speakEn)
+                val num2Speech = HindiTransliterator.formatPhoneForSpeech(allNums[1], speakEn)
+                SuaStateRepository.setPendingComms(
+                    PendingCommsConfirmation(
+                        actionType = DeviceActionType.CALL,
+                        contactName = dispName,
+                        phoneNumbers = allNums,
+                        selectedNumber = "",
+                        messageBody = "",
+                        scriptPreference = "",
+                        step = ConfirmationStep.SELECT_NUMBER,
+                        preferEnglishReply = speakEn
+                    )
+                )
+                return ParsedCommand(
+                    action = DeviceActionType.AI_CHAT,
+                    displayReply = "$assistantName CALL CONFIRMATION // $dispName has ${allNums.size} numbers: (1) ${allNums[0]} | (2) ${allNums[1]}. Say 'First number' or 'Second number'.",
+                    spokenReply = if (speakEn) {
+                        "$userName, $dispName has two phone numbers saved. The first number is $num1Speech, and the second number is $num2Speech. Which number should I call, first or second?"
+                    } else {
+                        "जी $userName, $dispName के दो नंबर सेव हैं। पहला नंबर है $num1Speech, और दूसरा नंबर है $num2Speech। बताइए पहले नंबर पर कॉल लगाऊँ या दूसरे नंबर पर?"
+                    }
+                )
+            } else {
+                // Exactly 1 number -> dial directly!
+                return cmd.copy(target = allNums.first())
+            }
+        }
+
+        // SMS or WHATSAPP_MSG: Always confirm with the user first, handle multiple numbers, and ask Hindi vs English!
+        val channelLabelEn = if (cmd.action == DeviceActionType.WHATSAPP_MSG) "WhatsApp message" else "SMS message"
+        val channelLabelHi = if (cmd.action == DeviceActionType.WHATSAPP_MSG) "व्हाट्सएप मैसेज" else "मैसेज"
+
+        if (allNums.size > 1) {
+            val num1Speech = HindiTransliterator.formatPhoneForSpeech(allNums[0], speakEn)
+            val num2Speech = HindiTransliterator.formatPhoneForSpeech(allNums[1], speakEn)
+            SuaStateRepository.setPendingComms(
+                PendingCommsConfirmation(
+                    actionType = cmd.action,
+                    contactName = dispName,
+                    phoneNumbers = allNums,
+                    selectedNumber = "",
+                    messageBody = cmd.message,
+                    scriptPreference = detectedLang,
+                    step = ConfirmationStep.SELECT_NUMBER,
+                    preferEnglishReply = speakEn
+                )
+            )
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName ${cmd.action.label.uppercase()} CONFIRM // $dispName has 2 numbers: (1) ${allNums[0]} | (2) ${allNums[1]}. Choose 1st or 2nd number, and Hindi or English.",
+                spokenReply = if (speakEn) {
+                    "Do you want to send a $channelLabelEn to $dispName? They have two numbers: first is $num1Speech, and second is $num2Speech. Tell me which number to use, whether to type in Hindi or English, and your message."
+                } else {
+                    "जी $userName, क्या आप $dispName को $channelLabelHi करना चाहते हैं? इनके दो नंबर सेव हैं: पहला नंबर $num1Speech और दूसरा नंबर $num2Speech। बताइए किस नंबर पर भेजना है, और मैसेज हिंदी में टाइप करना है या इंग्लिश में?"
+                }
+            )
+        } else {
+            val singlePhone = allNums.first()
+            SuaStateRepository.setPendingComms(
+                PendingCommsConfirmation(
+                    actionType = cmd.action,
+                    contactName = dispName,
+                    phoneNumbers = allNums,
+                    selectedNumber = singlePhone,
+                    messageBody = cmd.message,
+                    scriptPreference = detectedLang,
+                    step = ConfirmationStep.CONFIRM_AND_DETAILS,
+                    preferEnglishReply = speakEn
+                )
+            )
+            val msgPreview = if (cmd.message.isNotBlank()) " Message: \"${cmd.message}\"." else ""
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName ${cmd.action.label.uppercase()} CONFIRM // Recipient: $dispName ($singlePhone).$msgPreview Say 'Hindi' or 'English' and your message (or say 'Speak number').",
+                spokenReply = if (speakEn) {
+                    if (cmd.message.isNotBlank()) {
+                        "Do you want me to send this $channelLabelEn to $dispName? Please tell me if I should type it in Hindi or English, or say 'speak number' to hear their phone number."
+                    } else {
+                        "Do you want to send a $channelLabelEn to $dispName? Tell me whether to type the message in Hindi or English, and what message you want to send."
+                    }
+                } else {
+                    if (cmd.message.isNotBlank()) {
+                        "जी $userName, क्या आप $dispName को यह $channelLabelHi भेजना चाहते हैं? बताइए इसे हिंदी में टाइप करके लिखना है या इंग्लिश में?"
+                    } else {
+                        "जी $userName, क्या आप $dispName को $channelLabelHi करना चाहते हैं? बताइए मैसेज हिंदी में टाइप करके लिखना है या इंग्लिश में, और क्या लिखना है?"
+                    }
+                }
+            )
+        }
+    }
+
+    /**
+     * Handles the user's spoken/typed response during an active multi-step Call, SMS, or WhatsApp confirmation.
+     */
+    private fun handleActiveCommsConfirmation(
+        input: String,
+        pending: PendingCommsConfirmation,
+        userName: String,
+        assistantName: String,
+        speakEn: Boolean
+    ): ParsedCommand? {
+        val text = input.trim()
+        val lower = text.lowercase()
+
+        // 1. Check if user wants to CANCEL ("नहीं", "कैंसिल", "रहने दो", "cancel", "no", "stop")
+        val isCancel = Regex("\\b(cancel|stop|abort|nevermind|rehne do|mat karo|mat bhejo)\\b").containsMatchIn(lower) ||
+            lower == "no" || lower == "nahi" || lower == "na" ||
+            text == "नहीं" || text.contains("कैंसिल") || text.contains("रहने दो") || text.contains("मत भेजो") || text.contains("मत करो")
+        if (isCancel) {
+            SuaStateRepository.setPendingComms(null)
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName CANCELLED // Cancelled ${pending.actionType.label} to ${pending.contactName}.",
+                spokenReply = if (speakEn) {
+                    "Okay $userName, I have cancelled the ${pending.actionType.label} to ${pending.contactName}."
+                } else {
+                    "ठीक है $userName, मैंने ${pending.contactName} का ${if (pending.actionType == DeviceActionType.CALL) "कॉल" else "मैसेज"} कैंसिल कर दिया है।"
+                }
+            )
+        }
+
+        // 2. Check if user asks to SPEAK / READ THE NUMBERS ("नंबर बोलो", "दोनों नंबर बोलो", "speak both numbers", "tell me the number")
+        val asksToSpeakNumbers = lower.contains("number bolo") || lower.contains("dono number") ||
+            lower.contains("speak number") || lower.contains("speak both") || lower.contains("read number") ||
+            lower.contains("tell me the number") || lower.contains("kya number") ||
+            text.contains("नंबर बोलो") || text.contains("दोनों नंबर") || text.contains("नंबर बताओ") || text.contains("कौन सा नंबर")
+        if (asksToSpeakNumbers) {
+            return buildSpeakNumbersResponse(pending.contactName, pending.phoneNumbers, userName, assistantName, speakEn, keepPending = true)
+        }
+
+        // 3. Check if user is choosing between 1st and 2nd number
+        var chosenPhone = pending.selectedNumber
+        if (pending.phoneNumbers.size > 1 && chosenPhone.isEmpty()) {
+            val pickedIdx = when {
+                lower.contains("first") || lower.contains("pehla") || lower.contains("pahla") ||
+                    lower.contains("1st") || lower == "1" || lower.contains("number 1") ||
+                    text.contains("पहला") || text.contains("पहले") || text.contains("एक नंबर") -> 0
+                lower.contains("second") || lower.contains("dusra") || lower.contains("doosra") ||
+                    lower.contains("2nd") || lower == "2" || lower.contains("number 2") ||
+                    text.contains("दूसरा") || text.contains("दूसरे") || text.contains("दो नंबर") -> 1
+                else -> {
+                    val spokenDigits = text.replace(Regex("[^0-9]"), "")
+                    if (spokenDigits.length >= 3) {
+                        pending.phoneNumbers.indexOfFirst { it.endsWith(spokenDigits) || it.contains(spokenDigits) }
+                    } else -1
+                }
+            }
+            if (pickedIdx in pending.phoneNumbers.indices) {
+                chosenPhone = pending.phoneNumbers[pickedIdx]
+                if (pending.actionType == DeviceActionType.CALL) {
+                    SuaStateRepository.setPendingComms(null)
+                    return ParsedCommand(
+                        action = DeviceActionType.CALL,
+                        target = chosenPhone,
+                        displayReply = "$assistantName CALL // Calling ${pending.contactName} (${pickedIdx + 1}: $chosenPhone)",
+                        spokenReply = if (speakEn) {
+                            "Calling ${pending.contactName} on number ${pickedIdx + 1} now."
+                        } else {
+                            "जी $userName, ${pending.contactName} के ${if (pickedIdx == 0) "पहले" else "दूसरे"} नंबर पर कॉल लगाया जा रहा है।"
+                        }
+                    )
+                }
+            } else if (pending.actionType == DeviceActionType.CALL) {
+                val num1Speech = HindiTransliterator.formatPhoneForSpeech(pending.phoneNumbers[0], speakEn)
+                val num2Speech = HindiTransliterator.formatPhoneForSpeech(pending.phoneNumbers[1], speakEn)
+                return ParsedCommand(
+                    action = DeviceActionType.AI_CHAT,
+                    displayReply = "$assistantName CALL // Please say 'First number' (${pending.phoneNumbers[0]}) or 'Second number' (${pending.phoneNumbers[1]}).",
+                    spokenReply = if (speakEn) {
+                        "Please tell me whether to call the first number $num1Speech or the second number $num2Speech."
+                    } else {
+                        "कृपया बताइए, पहला नंबर $num1Speech लगाऊँ या दूसरा नंबर $num2Speech?"
+                    }
+                )
+            }
+        }
+
+        if (chosenPhone.isEmpty() && pending.phoneNumbers.isNotEmpty()) {
+            chosenPhone = pending.phoneNumbers.first()
+        }
+
+        // 4. For SMS or WHATSAPP_MSG: detect language choice (Hindi vs English) & message content
+        val langInThisTurn = detectExplicitLanguageChoice(text)
+        val effectiveLang = langInThisTurn.ifEmpty { pending.scriptPreference }
+
+        val cleanedMsgFromTurn = stripConfirmationAndLanguageWords(text)
+        val effectiveMessage = when {
+            cleanedMsgFromTurn.isNotBlank() -> cleanedMsgFromTurn
+            else -> pending.messageBody
+        }
+
+        // If user only confirmed ("हाँ", "yes") or only picked a number, ask for language (if missing) & message body
+        if (effectiveLang.isEmpty() && effectiveMessage.isEmpty()) {
+            SuaStateRepository.setPendingComms(
+                pending.copy(
+                    selectedNumber = chosenPhone,
+                    step = ConfirmationStep.CONFIRM_AND_DETAILS
+                )
+            )
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Recipient confirmed: ${pending.contactName} ($chosenPhone). Say 'In Hindi' or 'In English' and what message to write.",
+                spokenReply = if (speakEn) {
+                    "Got it $userName. Should I type the message to ${pending.contactName} in Hindi or English, and what should I write?"
+                } else {
+                    "जी $userName, ${pending.contactName} को मैसेज हिंदी में टाइप करके लिखना है या इंग्लिश में, और क्या लिखना है?"
+                }
+            )
+        }
+
+        if (effectiveLang.isNotEmpty() && effectiveMessage.isEmpty()) {
+            SuaStateRepository.setPendingComms(
+                pending.copy(
+                    selectedNumber = chosenPhone,
+                    scriptPreference = effectiveLang,
+                    step = ConfirmationStep.CONFIRM_AND_DETAILS
+                )
+            )
+            val langNameHi = if (effectiveLang == "HINDI") "हिंदी" else "इंग्लिश"
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Language set to $effectiveLang for ${pending.contactName}. Now speak or type your message.",
+                spokenReply = if (speakEn) {
+                    "Okay, I will type it in ${effectiveLang.lowercase()}. What message should I send to ${pending.contactName}?"
+                } else {
+                    "ठीक है $userName, मैं $langNameHi में टाइप करूँगी। बताइए ${pending.contactName} को क्या मैसेज लिखकर भेजना है?"
+                }
+            )
+        }
+
+        if (effectiveLang.isEmpty() && effectiveMessage.isNotBlank()) {
+            SuaStateRepository.setPendingComms(
+                pending.copy(
+                    selectedNumber = chosenPhone,
+                    messageBody = effectiveMessage,
+                    step = ConfirmationStep.CONFIRM_AND_DETAILS
+                )
+            )
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Message ready: \"$effectiveMessage\". Should I write it in Hindi or English?",
+                spokenReply = if (speakEn) {
+                    "Should I write this message to ${pending.contactName} in Hindi script or in English?"
+                } else {
+                    "जी $userName, यह मैसेज हिंदी में टाइप करके लिखना है या इंग्लिश में?"
+                }
+            )
+        }
+
+        // Both language choice AND message body are ready! Format the message in the requested script and dispatch!
+        val finalFormattedMessage = if (effectiveLang == "HINDI") {
+            HindiTransliterator.toHindiDevanagari(effectiveMessage)
+        } else {
+            val hasDevanagari = effectiveMessage.any { it.code in 0x0900..0x097F }
+            if (hasDevanagari) {
+                HindiTransliterator.toRoman(effectiveMessage).replaceFirstChar { it.uppercase() }
+            } else {
+                effectiveMessage
+            }
+        }
+
+        SuaStateRepository.setPendingComms(null)
+        return ParsedCommand(
+            action = pending.actionType,
+            target = chosenPhone,
+            message = finalFormattedMessage,
+            displayReply = "$assistantName ${pending.actionType.label.uppercase()} // Sending ($effectiveLang) to ${pending.contactName} ($chosenPhone): \"$finalFormattedMessage\"",
+            spokenReply = if (speakEn) {
+                "Sending your ${pending.actionType.label} in ${effectiveLang.lowercase()} to ${pending.contactName} now."
+            } else {
+                "जी $userName, ${pending.contactName} को ${if (effectiveLang == "HINDI") "हिंदी" else "इंग्लिश"} में मैसेज भेजा जा रहा है।"
+            }
+        )
+    }
+
+    private fun detectExplicitLanguageChoice(text: String): String {
+        val lower = text.lowercase()
+        val wantsHindi = Regex("\\b(hindi|devanagari)\\b").containsMatchIn(lower) ||
+            text.contains("हिंदी") || text.contains("हिन्दी")
+        val wantsEnglish = Regex("\\b(english|roman|inglish)\\b").containsMatchIn(lower) ||
+            text.contains("इंग्लिश") || text.contains("अंग्रेजी") || text.contains("अंग्रेज़ी")
+        return when {
+            wantsHindi && !wantsEnglish -> "HINDI"
+            wantsEnglish && !wantsHindi -> "ENGLISH"
+            else -> ""
+        }
+    }
+
+    private fun stripConfirmationAndLanguageWords(text: String): String {
+        var cleaned = text.trim()
+        val patterns = listOf(
+            Regex("^(?i)(yes|yeah|haan|ha|han|ji|ok|okay|sure|हाँ|हां|जी|ठीक है|भेज दो|सेंड करो)[,\\s]*"),
+            Regex("^(?i)(first number|second number|number 1|number 2|pehla number|dusra number|पहला नंबर|दूसरा नंबर|पहले नंबर पर|दूसरे नंबर पर)[,\\s]*"),
+            Regex("^(?i)(in hindi|in english|hindi mein|hindi me|english mein|english me|type in hindi|type in english|write in hindi|write in english|हिंदी में लिखो|हिंदी में टाइप करो|हिंदी में|इंग्लिश में लिखो|इंग्लिश में टाइप करो|इंग्लिश में|अंग्रेजी में)[,:\\s]*"),
+            Regex("(?i)\\s*(in hindi|in english|hindi mein|english mein|हिंदी में|इंग्लिश में)$"),
+            Regex("^(?i)(ki|that|likho|type karo|write|say|बोलो कि|लिखो कि|लिखो)[,:\\s]*")
+        )
+        for (p in patterns) {
+            cleaned = cleaned.replace(p, "").trim()
+        }
+        val onlyLangOrConfirm = cleaned.lowercase() in setOf(
+            "yes", "haan", "ha", "ji", "ok", "hindi", "english", "first", "second", "1", "2",
+            "हाँ", "हां", "जी", "हिंदी", "हिन्दी", "इंग्लिश", "अंग्रेजी", "पहला", "दूसरा"
+        )
+        return if (onlyLangOrConfirm) "" else cleaned
+    }
+
+    /**
+     * Handles standalone "दोनों नंबर बोलो" / "नंबर बोलो" / "राहुल का नंबर बोलो" / "speak both numbers"
+     */
+    private fun parseSpeakPhoneNumbersIntent(
+        text: String,
+        userName: String,
+        assistantName: String,
+        speakEn: Boolean
+    ): ParsedCommand? {
+        val lower = text.lowercase()
+        val asksNumber = lower.contains("number bolo") || lower.contains("dono number") ||
+            lower.contains("number batao") || lower.contains("speak both number") ||
+            lower.contains("speak the number") || lower.contains("read both number") ||
+            lower.contains("tell me both number") ||
+            text.contains("नंबर बोलो") || text.contains("दोनों नंबर") || text.contains("नंबर सुनाओ") ||
+            text.contains("नंबर बताओ")
+
+        if (!asksNumber) return null
+
+        val namedContact = extractTargetNameForCallOrSms(
+            text.replace("नंबर बोलो", "को कॉल")
+                .replace("दोनों नंबर बोलो", "को कॉल")
+                .replace("नंबर बताओ", "को कॉल")
+        )
+        if (namedContact.isNotBlank() && controller != null) {
+            val res = controller.resolvePhoneNumber(namedContact)
+            if (res.allPhoneNumbers.isNotEmpty()) {
+                val cName = res.displayName.ifEmpty { namedContact }
+                SuaStateRepository.recordResolvedContact(cName, res.allPhoneNumbers)
+                return buildSpeakNumbersResponse(cName, res.allPhoneNumbers, userName, assistantName, speakEn, keepPending = false)
+            }
+        }
+
+        val lastNums = SuaStateRepository.lastResolvedNumbers
+        val lastName = SuaStateRepository.lastResolvedContactName.ifEmpty { "Contact" }
+        if (lastNums.isNotEmpty()) {
+            return buildSpeakNumbersResponse(lastName, lastNums, userName, assistantName, speakEn, keepPending = false)
+        }
+
+        return ParsedCommand(
+            action = DeviceActionType.AI_CHAT,
+            displayReply = "$assistantName CONTACTS // Please mention the contact name first (e.g. 'Call Rahul' or 'Message Rahul') so I can read their saved numbers.",
+            spokenReply = if (speakEn) {
+                "Please tell me the contact name first, $userName, so I can search and read out their phone numbers."
+            } else {
+                "जी $userName, पहले उस व्यक्ति का नाम बताइए जिसका नंबर आप सुनना चाहते हैं।"
+            }
+        )
+    }
+
+    private fun buildSpeakNumbersResponse(
+        contactName: String,
+        numbers: List<String>,
+        userName: String,
+        assistantName: String,
+        speakEn: Boolean,
+        keepPending: Boolean
+    ): ParsedCommand {
+        if (!keepPending) {
+            SuaStateRepository.setPendingComms(null)
+        }
+        return if (numbers.size >= 2) {
+            val n1 = HindiTransliterator.formatPhoneForSpeech(numbers[0], speakEn)
+            val n2 = HindiTransliterator.formatPhoneForSpeech(numbers[1], speakEn)
+            ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName CONTACT NUMBERS // $contactName: (1) ${numbers[0]} | (2) ${numbers[1]}",
+                spokenReply = if (speakEn) {
+                    "Here are both numbers for $contactName: The first number is $n1, and the second number is $n2."
+                } else {
+                    "जी $userName, $contactName के दोनों नंबर सुनिए: पहला नंबर है $n1, और दूसरा नंबर है $n2।"
+                }
+            )
+        } else {
+            val n1 = HindiTransliterator.formatPhoneForSpeech(numbers.first(), speakEn)
+            ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName CONTACT NUMBER // $contactName: ${numbers.first()}",
+                spokenReply = if (speakEn) {
+                    "$contactName has one saved number: $n1."
+                } else {
+                    "जी $userName, $contactName का नंबर है: $n1।"
+                }
+            )
         }
     }
 
@@ -177,17 +668,17 @@ class SuaBrain(private val prefs: SuaPreferences) {
 
     /**
      * Handles Developer Attribution ("किसने बनाया", "कौन डेवलप किया है", "MR. SHASHANK")
-     * as well as User Name and Assistant Name queries.
+     * as well as User Name and Assistant Name queries in both Hindi and English.
      */
     private fun parseDeveloperAndIdentityIntent(
         input: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): ParsedCommand? {
         val text = input.trim()
         val lower = text.lowercase()
 
-        // 1. Developer query: "किसने बनाया", "कौन डेवलप किया", "who developed you", "who made you", "developer kaun hai"
         val isDeveloperQuery = lower.contains("kisne banaya") ||
             lower.contains("kisne develop") ||
             lower.contains("kaun develop") ||
@@ -214,11 +705,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "DEVELOPER // I was proudly developed & engineered by ${SuaPreferences.DEVELOPER_NAME}.",
-                spokenReply = "मुझे मिस्टर शशांक (MR. SHASHANK) ने बहुत प्यार और स्मार्ट टेक्नोलॉजी से डेवलप किया है! मेरे डेवलपर मिस्टर शशांक हैं।"
+                spokenReply = if (speakEn) {
+                    "I was proudly developed and engineered by Mister Shashank (${SuaPreferences.DEVELOPER_NAME})!"
+                } else {
+                    "मुझे मिस्टर शशांक (MR. SHASHANK) ने बहुत प्यार और स्मार्ट टेक्नोलॉजी से डेवलप किया है! मेरे डेवलपर मिस्टर शशांक हैं।"
+                }
             )
         }
 
-        // 2. Assistant Name query ("तुम्हारा नाम क्या है?" / "What is your name?")
         val isAssistantNameQuery = lower.contains("tumhara naam") ||
             lower.contains("tera naam") ||
             lower.contains("your name") ||
@@ -231,11 +725,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "$assistantName AI // My name is $assistantName (Wake-word: 'Ok $assistantName' / 'Hi $assistantName'). Developed by ${SuaPreferences.DEVELOPER_NAME} for $userName.",
-                spokenReply = "मेरा नाम $assistantName है $userName! मुझे मिस्टर शशांक ने डेवलप किया है, और आप कभी भी ओके $assistantName या हाय $assistantName बोलकर मुझसे प्यार से बात कर सकते हैं।"
+                spokenReply = if (speakEn) {
+                    "My name is $assistantName, $userName! I was developed by Mister Shashank, and you can call me anytime by saying Ok $assistantName or Hi $assistantName."
+                } else {
+                    "मेरा नाम $assistantName है $userName! मुझे मिस्टर शशांक ने डेवलप किया है, और आप कभी भी ओके $assistantName या हाय $assistantName बोलकर मुझसे प्यार से बात कर सकते हैं।"
+                }
             )
         }
 
-        // 3. Changing Assistant Name by voice ("तुम्हारा नाम ... रख दो")
         val setAssistantNameMatch = Regex(
             "(?:तुम्हारा नाम|आज से तुम्हारा नाम|change your name to|set your name to|tumhara naam)\\s+([\\p{L}a-zA-Z0-9]{2,18})(?:\\s+रख दो|\\s+है|$)",
             RegexOption.IGNORE_CASE
@@ -247,7 +744,11 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 return ParsedCommand(
                     action = DeviceActionType.MEMORY_SAVE,
                     displayReply = "WAKE-WORD UPDATED // Assistant name changed to '$newBotName'. Say 'Ok $newBotName' or 'Hi $newBotName'.",
-                    spokenReply = "जी $userName, अब से मेरा नाम $newBotName है! अब आप ओके $newBotName या हाय $newBotName बोलकर मुझे बुला सकते हैं।"
+                    spokenReply = if (speakEn) {
+                        "Got it $userName! From now on my name is $newBotName. You can wake me by saying Ok $newBotName."
+                    } else {
+                        "जी $userName, अब से मेरा नाम $newBotName है! अब आप ओके $newBotName या हाय $newBotName बोलकर मुझे बुला सकते हैं।"
+                    }
                 )
             }
         }
@@ -265,8 +766,8 @@ class SuaBrain(private val prefs: SuaPreferences) {
     ): ParsedCommand? {
         val text = input.trim()
         val lower = text.lowercase()
+        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
 
-        // 1. Check if user is sharing their name ("मेरा नाम शशांक है" / "My name is Rahul")
         val nameHiMatch = Regex(
             "(?:मेरा नाम|mera naam|my name is)\\s+([\\p{L}a-zA-Z0-9.\\s]{2,25}?)(?:\\s+है|\\s+hai|$)",
             RegexOption.IGNORE_CASE
@@ -281,12 +782,15 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     action = DeviceActionType.MEMORY_SAVE,
                     memoryFact = fact,
                     displayReply = "USER PROFILE UPDATED // Active user set to '$newUserName' & saved in Memory.",
-                    spokenReply = "जी $newUserName, मैंने बहुत प्यार से याद रख लिया है कि आपका नाम $newUserName है!"
+                    spokenReply = if (speakEn) {
+                        "Lovely to meet you, $newUserName! I have saved your name in my memory."
+                    } else {
+                        "जी $newUserName, मैंने बहुत प्यार से याद रख लिया है कि आपका नाम $newUserName है!"
+                    }
                 )
             }
         }
 
-        // 2. Explicit "Remember that..." / "याद रखना कि..." / "याद रखो..."
         val rememberMatch = Regex(
             "^(?:moko\\s+|hi\\s+moko\\s+|ok\\s+moko\\s+|मोको\\s+|हाय\\s+मोको\\s+)?(?:याद रखना कि|याद रखना|याद रखो कि|याद रखो|ये बात याद रखना|remember that|remember|yaad rakhna ki|yaad rakhna|yaad rakho)\\s+(.+)$",
             RegexOption.IGNORE_CASE
@@ -300,12 +804,15 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     action = DeviceActionType.MEMORY_SAVE,
                     memoryFact = cleanFact,
                     displayReply = "MEMORY SAVED // Stored in $assistantName Memory Vault: \"$cleanFact\"",
-                    spokenReply = "जी $userName, मैंने यह बात अपनी मेमोरी में हमेशा के लिए याद रख ली है: $fact"
+                    spokenReply = if (speakEn) {
+                        "Okay $userName, I have saved this in my permanent memory: $cleanFact"
+                    } else {
+                        "जी $userName, मैंने यह बात अपनी मेमोरी में हमेशा के लिए याद रख ली है: $fact"
+                    }
                 )
             }
         }
 
-        // 3. User Name Recall ("मेरा नाम क्या है?" / "कौन यूजर यूज कर रहा है?" / "What is my name?")
         val isAskingUserName = lower.contains("mera naam kya hai") ||
             text.contains("मेरा नाम क्या है") ||
             text.contains("कौन यूज कर रहा") ||
@@ -316,11 +823,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "USER IDENTITY // Current User: $userName | Developer: ${SuaPreferences.DEVELOPER_NAME}",
-                spokenReply = "आपका नाम $userName है! और मुझे मिस्टर शशांक (MR. SHASHANK) ने डेवलप किया है।"
+                spokenReply = if (speakEn) {
+                    "Your name is $userName! And I was developed by Mister Shashank."
+                } else {
+                    "आपका नाम $userName है! और मुझे मिस्टर शशांक (MR. SHASHANK) ने डेवलप किया है।"
+                }
             )
         }
 
-        // 4. Memory Vault summary query ("तुम्हें क्या याद है?" / "What do you remember?")
         val isAskingMemories = lower.contains("kya yaad hai") || text.contains("क्या याद है") ||
             lower.contains("what do you remember") || lower.contains("show my memory") ||
             text.contains("मेमोरी बताओ") || lower.contains("meri memory")
@@ -330,14 +840,22 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
                     displayReply = "$assistantName MEMORY // User: $userName | Developer: ${SuaPreferences.DEVELOPER_NAME}. Say 'Remember that...' to store extra facts.",
-                    spokenReply = "जी $userName, मुझे याद है कि आपका नाम $userName है और मुझे मिस्टर शशांक ने बनाया है। आप 'याद रखना कि...' बोलकर कोई भी नई बात सेव कर सकते हैं।"
+                    spokenReply = if (speakEn) {
+                        "Yes $userName, I remember that your name is $userName and I was created by Mister Shashank. You can say 'Remember that...' to save any new fact."
+                    } else {
+                        "जी $userName, मुझे याद है कि आपका नाम $userName है और मुझे मिस्टर शशांक ने बनाया है। आप 'याद रखना कि...' बोलकर कोई भी नई बात सेव कर सकते हैं।"
+                    }
                 )
             } else {
                 val summary = memories.take(3).joinToString(" | ") { it.factText }
                 ParsedCommand(
                     action = DeviceActionType.AI_CHAT,
                     displayReply = "$assistantName MEMORY (${memories.size} saved) // $summary",
-                    spokenReply = "जी $userName, मुझे आपके बारे में ${memories.size} खास बातें याद हैं, जैसे कि: ${memories.first().factText}"
+                    spokenReply = if (speakEn) {
+                        "Yes $userName, I remember ${memories.size} facts about you, including: ${memories.first().factText}"
+                    } else {
+                        "जी $userName, मुझे आपके बारे में ${memories.size} खास बातें याद हैं, जैसे कि: ${memories.first().factText}"
+                    }
                 )
             }
         }
@@ -377,6 +895,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
     ): ParsedCommand? {
         val text = input.trim()
         val lower = text.lowercase()
+        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
@@ -395,13 +914,13 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_OFF,
                     displayReply = "$assistantName OPTICS // Flashlight turned OFF.",
-                    spokenReply = "जी $userName, मैंने फ्लैशलाइट बंद कर दी है।"
+                    spokenReply = if (speakEn) "Okay $userName, I have turned off the flashlight." else "जी $userName, मैंने फ्लैशलाइट बंद कर दी है।"
                 )
             } else {
                 ParsedCommand(
                     action = DeviceActionType.FLASHLIGHT_ON,
                     displayReply = "$assistantName OPTICS // Flashlight turned ON.",
-                    spokenReply = "जी $userName, मैंने फ्लैशलाइट चालू कर दी है।"
+                    spokenReply = if (speakEn) "Okay $userName, I have turned on the flashlight." else "जी $userName, मैंने फ्लैशलाइट चालू कर दी है।"
                 )
             }
         }
@@ -415,7 +934,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.LOCK_PHONE,
                 displayReply = "$assistantName SECURITY // Locking phone screen now.",
-                spokenReply = "जी $userName, आपका फोन लॉक किया जा रहा है।"
+                spokenReply = if (speakEn) "Locking your phone screen now, $userName." else "जी $userName, आपका फोन लॉक किया जा रहा है।"
             )
         }
 
@@ -434,28 +953,28 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     action = DeviceActionType.BRIGHTNESS_SET,
                     numericValue = 100,
                     displayReply = "$assistantName DISPLAY // Brightness set to 100%.",
-                    spokenReply = "जी $userName, ब्राइटनेस फुल 100 प्रतिशत कर दी गई है।"
+                    spokenReply = if (speakEn) "Brightness set to 100 percent, $userName." else "जी $userName, ब्राइटनेस फुल 100 प्रतिशत कर दी गई है।"
                 )
                 extractedNum in 5..100 -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_SET,
                     numericValue = extractedNum,
                     displayReply = "$assistantName DISPLAY // Brightness set to $extractedNum%.",
-                    spokenReply = "जी $userName, ब्राइटनेस $extractedNum प्रतिशत कर दी गई है।"
+                    spokenReply = if (speakEn) "Brightness set to $extractedNum percent, $userName." else "जी $userName, ब्राइटनेस $extractedNum प्रतिशत कर दी गई है।"
                 )
                 isDown -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_DOWN,
                     displayReply = "$assistantName DISPLAY // Decreasing brightness by 25%.",
-                    spokenReply = "जी $userName, स्क्रीन की ब्राइटनेस कम कर दी गई है।"
+                    spokenReply = if (speakEn) "Decreasing screen brightness, $userName." else "जी $userName, स्क्रीन की ब्राइटनेस कम कर दी गई है।"
                 )
                 isUp -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_UP,
                     displayReply = "$assistantName DISPLAY // Increasing brightness by 25%.",
-                    spokenReply = "जी $userName, स्क्रीन की ब्राइटनेस बढ़ा दी गई है।"
+                    spokenReply = if (speakEn) "Increasing screen brightness, $userName." else "जी $userName, स्क्रीन की ब्राइटनेस बढ़ा दी गई है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.BRIGHTNESS_UP,
                     displayReply = "$assistantName DISPLAY // Adjusting brightness.",
-                    spokenReply = "जी $userName, ब्राइटनेस एडजस्ट कर दी गई है।"
+                    spokenReply = if (speakEn) "Adjusting screen brightness, $userName." else "जी $userName, ब्राइटनेस एडजस्ट कर दी गई है।"
                 )
             }
         }
@@ -474,29 +993,29 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 isMute -> ParsedCommand(
                     action = DeviceActionType.VOLUME_MUTE,
                     displayReply = "$assistantName AUDIO // System sound muted (0%).",
-                    spokenReply = "जी $userName, फोन का साउंड म्यूट कर दिया गया है।"
+                    spokenReply = if (speakEn) "Phone volume has been muted, $userName." else "जी $userName, फोन का साउंड म्यूट कर दिया गया है।"
                 )
                 lower.contains("full") || text.contains("फुल") -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = 100,
                     displayReply = "$assistantName AUDIO // Volume set to 100%.",
-                    spokenReply = "जी $userName, साउंड फुल सौ प्रतिशत कर दिया गया है।"
+                    spokenReply = if (speakEn) "Volume set to 100 percent, $userName." else "जी $userName, साउंड फुल सौ प्रतिशत कर दिया गया है।"
                 )
                 extractedNum in 0..100 -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = extractedNum,
                     displayReply = "$assistantName AUDIO // Volume set to $extractedNum%.",
-                    spokenReply = "जी $userName, साउंड $extractedNum प्रतिशत कर दिया गया है।"
+                    spokenReply = if (speakEn) "Volume set to $extractedNum percent, $userName." else "जी $userName, साउंड $extractedNum प्रतिशत कर दिया गया है।"
                 )
                 isDown -> ParsedCommand(
                     action = DeviceActionType.VOLUME_DOWN,
                     displayReply = "$assistantName AUDIO // Decreasing volume by 20%.",
-                    spokenReply = "जी $userName, फोन की आवाज़ कम कर दी गई है।"
+                    spokenReply = if (speakEn) "Decreasing phone volume, $userName." else "जी $userName, फोन की आवाज़ कम कर दी गई है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.VOLUME_UP,
                     displayReply = "$assistantName AUDIO // Increasing volume by 20%.",
-                    spokenReply = "जी $userName, फोन का साउंड बढ़ा दिया गया है।"
+                    spokenReply = if (speakEn) "Increasing phone volume, $userName." else "जी $userName, फोन का साउंड बढ़ा दिया गया है।"
                 )
             }
         }
@@ -515,22 +1034,22 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 isNext -> ParsedCommand(
                     action = DeviceActionType.MEDIA_NEXT,
                     displayReply = "$assistantName MEDIA // Skipping to next track.",
-                    spokenReply = "जी $userName, अगला गाना चलाया जा रहा है।"
+                    spokenReply = if (speakEn) "Playing the next song, $userName." else "जी $userName, अगला गाना चलाया जा रहा है।"
                 )
                 isPrev -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PREV,
                     displayReply = "$assistantName MEDIA // Playing previous track.",
-                    spokenReply = "जी $userName, पिछला गाना चलाया जा रहा है।"
+                    spokenReply = if (speakEn) "Playing the previous song, $userName." else "जी $userName, पिछला गाना चलाया जा रहा है।"
                 )
                 isStop -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PAUSE,
                     displayReply = "$assistantName MEDIA // Music playback paused.",
-                    spokenReply = "जी $userName, म्यूजिक रोक दिया गया है।"
+                    spokenReply = if (speakEn) "Music playback paused, $userName." else "जी $userName, म्यूजिक रोक दिया गया है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.MEDIA_PLAY,
                     displayReply = "$assistantName MEDIA // Starting music playback.",
-                    spokenReply = "जी $userName, म्यूजिक चालू किया जा रहा है।"
+                    spokenReply = if (speakEn) "Starting music playback, $userName." else "जी $userName, म्यूजिक चालू किया जा रहा है।"
                 )
             }
         }
@@ -540,22 +1059,43 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return ParsedCommand(
                 action = DeviceActionType.OPEN_SETTINGS,
                 displayReply = "$assistantName SYSTEM // Opening Android Settings.",
-                spokenReply = "जी $userName, फोन की सेटिंग्स खोली जा रही हैं।"
+                spokenReply = if (speakEn) "Opening Android Settings, $userName." else "जी $userName, फोन की सेटिंग्स खोली जा रही हैं।"
             )
         }
 
-        // 7. OPEN ANY APP BY VOICE ("WhatsApp खोलो", "Open YouTube", "Instagram चालू करो", "Open Camera", etc.)
+        // 7. WHATSAPP MESSAGE ("WhatsApp पर राहुल को मैसेज करो", "Send WhatsApp message to Rahul")
+        val hasWhatsAppWord = lower.contains("whatsapp") || text.contains("व्हाट्सएप") ||
+            text.contains("वाट्सएप") || text.contains("व्हाट्सऐप")
+        val hasMessageIntent = Regex("\\b(message|sms|msg|text|send|bhejo|karo|likho)\\b").containsMatchIn(lower) ||
+            text.contains("मैसेज") || text.contains("संदेश") || text.contains("भेजो") || text.contains("लिखो")
+        if (hasWhatsAppWord && hasMessageIntent && !lower.startsWith("open whatsapp") && !text.contains("व्हाट्सएप खोलो")) {
+            val targetName = extractTargetNameForCallOrSms(text)
+            val msgContent = extractMessageBody(text)
+            if (targetName.isNotEmpty()) {
+                val hudName = HindiTransliterator.toRoman(targetName).replaceFirstChar { it.uppercase() }
+                    .ifEmpty { targetName }
+                return ParsedCommand(
+                    action = DeviceActionType.WHATSAPP_MSG,
+                    target = targetName,
+                    message = msgContent,
+                    displayReply = "$assistantName WHATSAPP // Target: $hudName",
+                    spokenReply = ""
+                )
+            }
+        }
+
+        // 8. OPEN ANY APP BY VOICE ("WhatsApp खोलो", "Open YouTube", "Instagram चालू करो", "Open Camera", etc.)
         val appTarget = extractAppToOpen(text)
         if (appTarget != null) {
             return ParsedCommand(
                 action = DeviceActionType.OPEN_APP,
                 target = appTarget,
                 displayReply = "$assistantName LAUNCHER // Opening app: $appTarget",
-                spokenReply = "जी $userName, $appTarget खोला जा रहा है।"
+                spokenReply = if (speakEn) "Opening $appTarget now, $userName." else "जी $userName, $appTarget खोला जा रहा है।"
             )
         }
 
-        // 8. SMS / MESSAGE
+        // 9. SMS / MESSAGE
         val hasSmsWord = Regex("\\b(message|sms|msg|text)\\b").containsMatchIn(lower) ||
             text.contains("मैसेज") || text.contains("संदेश") || text.contains("एसएमएस")
         if (hasSmsWord) {
@@ -572,7 +1112,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 9. PHONE CALL
+        // 10. PHONE CALL
         val hasCallWord = Regex("\\b(call|dial)\\b").containsMatchIn(lower) ||
             lower.contains("phone laga") || lower.contains("fone laga") ||
             text.contains("कॉल") || text.contains("फ़ोन लगा") ||
@@ -589,7 +1129,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 10. BATTERY
+        // 11. BATTERY
         if (Regex("\\bbattery\\b").containsMatchIn(lower) || text.contains("बैटरी") ||
             (text.contains("चार्ज") && (text.contains("कितना") || text.contains("कितनी")))
         ) {
@@ -600,7 +1140,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 11. ALARM
+        // 12. ALARM
         if (Regex("\\balarm\\b").containsMatchIn(lower) || text.contains("अलार्म")) {
             val (hour24, minute) = parseAlarmHourAndMinute(text)
             val timeFormatted = String.format("%02d:%02d", hour24, minute)
@@ -610,7 +1150,9 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 secondaryNumericValue = minute,
                 target = "$assistantName Alarm",
                 displayReply = "$assistantName ALARM // Setting alarm for $timeFormatted.",
-                spokenReply = if (minute > 0) {
+                spokenReply = if (speakEn) {
+                    "Setting an alarm for $timeFormatted, $userName."
+                } else if (minute > 0) {
                     "जी $userName, $hour24 बजकर $minute मिनट का अलार्म सेट किया जा रहा है।"
                 } else {
                     "जी $userName, $hour24 बजे का अलार्म सेट किया जा रहा है।"
@@ -618,7 +1160,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             )
         }
 
-        // 12. TIME / DATE
+        // 13. TIME / DATE
         val isTimeQuery = Regex("\\b(what time|current time|time kya|kya time|tell me the time|what is the date|aaj ki tarikh|samay kya|kitne baje)\\b")
             .containsMatchIn(lower) ||
             text.contains("समय क्या") || text.contains("कितने बजे") ||
@@ -738,7 +1280,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             return phoneMatch.value.replace(Regex("[^0-9+]"), "")
         }
 
-        val koMatch = Regex("([\\p{L}\\s]+?)\\s+को\\s+(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|call|phone|message|sms)").find(text)
+        val koMatch = Regex("([\\p{L}\\s]+?)\\s+को\\s+(?:व्हाट्सएप\\s+पर\\s+|whatsapp\\s+par\\s+)?(?:कॉल|फोन|फ़ोन|मैसेज|संदेश|एसएमएस|व्हाट्सएप|call|phone|message|sms|whatsapp)").find(text)
         if (koMatch != null) {
             val candidate = cleanExtractedContactName(koMatch.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
@@ -751,14 +1293,21 @@ class SuaBrain(private val prefs: SuaPreferences) {
         }
 
         val hinglishKo =
-            Regex("(?i)(?:mera\\s+|meri\\s+|moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+|ok\\s+moko\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:call|phone|fone|message|sms|msg)").find(text)
+            Regex("(?i)(?:mera\\s+|meri\\s+|moko\\s+|hi\\s+moko\\s+|hey\\s+moko\\s+|ok\\s+moko\\s+|whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?([a-zA-Z\\p{L}]+(?:\\s+[a-zA-Z\\p{L}]+)?)\\s+ko\\s+(?:whatsapp\\s+par\\s+|whatsapp\\s+pe\\s+)?(?:call|phone|fone|message|sms|msg|whatsapp)").find(text)
         if (hinglishKo != null) {
             val candidate = cleanExtractedContactName(hinglishKo.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
         }
 
+        val englishWhatsApp =
+            Regex("(?i)(?:send\\s+)?(?:a\\s+)?whatsapp\\s+(?:message\\s+)?to\\s+([a-zA-Z\\p{L}]+)").find(text)
+        if (englishWhatsApp != null) {
+            val candidate = cleanExtractedContactName(englishWhatsApp.groupValues[1])
+            if (candidate.isNotEmpty()) return candidate
+        }
+
         val englishCall =
-            Regex("(?i)(?:call|dial|phone|message|sms|text)\\s+(?:to\\s+)?([a-zA-Z\\p{L}]+)").find(text)
+            Regex("(?i)(?:call|dial|phone|message|sms|text|whatsapp)\\s+(?:to\\s+)?([a-zA-Z\\p{L}]+)").find(text)
         if (englishCall != null) {
             val candidate = cleanExtractedContactName(englishCall.groupValues[1])
             if (candidate.isNotEmpty()) return candidate
@@ -770,10 +1319,10 @@ class SuaBrain(private val prefs: SuaPreferences) {
     private fun cleanExtractedContactName(raw: String): String {
         return raw.trim()
             .replace(
-                Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|suno\\s+moko|moko|moco|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|सुनो\\s+मोको|मोको|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"),
+                Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|suno\\s+moko|moko|moco|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|सुनो\\s+मोको|मोको|व्हाट्सएप\\s+पर|व्हाट्सएप\\s+पे|whatsapp\\s+par|whatsapp\\s+pe|whatsapp|मेरा|मेरी|मेरे|जरा|ज़रा|प्लीज|please)\\s+"),
                 ""
             )
-            .replace(Regex("(?i)\\s+(को|ko|पे|पर|par)$"), "")
+            .replace(Regex("(?i)\\s+(को|ko|पे|पर|par|on\\s+whatsapp|व्हाट्सएप\\s+पर)$"), "")
             .trim()
     }
 
@@ -793,7 +1342,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
         return ""
     }
 
-    private fun buildSystemPrompt(userName: String, assistantName: String): String {
+    private fun buildSystemPrompt(userName: String, assistantName: String, speakEn: Boolean): String {
         val savedMemories = SuaStateRepository.memoryItems.value
             .take(15)
             .joinToString("\n") { "- ${it.factText}" }
@@ -805,34 +1354,43 @@ class SuaBrain(private val prefs: SuaPreferences) {
             .joinToString("\n") { "User ($userName): ${it.userCommand} | $assistantName: ${it.suaResponse}" }
             .ifBlank { "No prior conversation in this session." }
 
+        val spokenLangRule = if (speakEn) {
+            "The user spoke in English, so `spokenReply` MUST be in warm, natural English."
+        } else {
+            "The user spoke in Hindi/Hinglish, so `spokenReply` MUST be in sweet, natural Hindi (Devanagari)."
+        }
+
         return """
             You are $assistantName, a loving, sweet, ultra-smart personal AI voice assistant for Android.
             CRITICAL IDENTITY & DEVELOPER FACTS:
             1. Your name is $assistantName. Never call yourself Jarvis or SUA.
-            2. You were developed and created by ${SuaPreferences.DEVELOPER_NAME} (मिस्टर शशांक). Whenever anyone asks who developed you, who created you, or who your developer is, you MUST proudly say "${SuaPreferences.DEVELOPER_NAME}".
-            3. The current user's name is "$userName". Speak to $userName warmly, affectionately, and respectfully like a caring, sweet friend ("प्यार से बात करें").
-            4. Use the SAVED USER MEMORIES and RECENT CONVERSATION HISTORY below:
+            2. You were developed and created by ${SuaPreferences.DEVELOPER_NAME}. Whenever anyone asks who developed you, who created you, or who your developer is, you MUST proudly say "${SuaPreferences.DEVELOPER_NAME}".
+            3. The current user's name is "$userName". Speak to $userName warmly, affectionately, and respectfully.
+            4. LANGUAGE RULE:
+               - `displayReply` MUST ALWAYS be 100% in English (never use Hindi/Devanagari script in `displayReply`).
+               - $spokenLangRule
+            5. Use the SAVED USER MEMORIES and RECENT CONVERSATION HISTORY below:
             [SAVED USER MEMORIES]:
             $savedMemories
             
             [RECENT CONVERSATION HISTORY]:
             $recentConversation
             
-            5. Return ONLY a valid JSON object matching this exact schema:
+            6. Return ONLY a valid JSON object matching this exact schema:
             {
-              "action": "CALL" | "SMS" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
-              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS, or App name (e.g. 'WhatsApp', 'YouTube') if OPEN_APP, otherwise empty string",
-              "message": "SMS text content if action is SMS, otherwise empty string",
+              "action": "CALL" | "SMS" | "WHATSAPP_MSG" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
+              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS/WHATSAPP_MSG, or App name (e.g. 'WhatsApp', 'YouTube') if OPEN_APP, otherwise empty string",
+              "message": "Message text content if action is SMS or WHATSAPP_MSG, otherwise empty string",
               "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm 24h hour, or -1 if not applicable),
               "secondaryNumericValue": integer (0-59 for alarm minutes, default 0),
               "memoryFact": "Short English summary if user shared a new personal fact/preference to remember, else empty string",
-              "displayReply": "Concise, sharp response in clean English for the on-screen HUD card.",
-              "spokenReply": "Sweet, affectionate, natural spoken response in Hindi (Devanagari) addressing $userName warmly."
+              "displayReply": "Concise response in 100% English for the on-screen HUD card.",
+              "spokenReply": "Sweet, affectionate spoken response matching the user's language (Hindi Devanagari if user spoke Hindi/Hinglish, or English if user spoke English)."
             }
         """.trimIndent()
     }
 
-    private fun parseAiJsonResponse(rawText: String, assistantName: String, userName: String): ParsedCommand {
+    private fun parseAiJsonResponse(rawText: String, assistantName: String, userName: String, speakEn: Boolean): ParsedCommand {
         val cleanJson = rawText
             .removePrefix("```json")
             .removePrefix("```")
@@ -850,10 +1408,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 } catch (_: Exception) {
                     DeviceActionType.AI_CHAT
                 }
-                val displayEn = parsedObj.optString("displayReply", "")
+                val rawDisplayEn = parsedObj.optString("displayReply", "")
                     .ifBlank { "$assistantName // Command processed." }
-                val spokenHi = parsedObj.optString("spokenReply", "")
-                    .ifBlank { "जी $userName, आपका काम पूरा कर दिया गया है।" }
+                val displayEn = sanitizeForHud(rawDisplayEn)
+                val spokenOut = parsedObj.optString("spokenReply", "")
+                    .ifBlank {
+                        if (speakEn) "Done $userName, I have completed your request."
+                        else "जी $userName, आपका काम पूरा कर दिया गया है।"
+                    }
                 val extractedMemory = parsedObj.optString("memoryFact", "").trim()
 
                 return ParsedCommand(
@@ -864,16 +1426,15 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     secondaryNumericValue = parsedObj.optInt("secondaryNumericValue", 0),
                     memoryFact = extractedMemory,
                     displayReply = displayEn,
-                    spokenReply = spokenHi
+                    spokenReply = spokenOut
                 )
             } catch (_: Exception) {
             }
         }
 
-        // Plain-text fallback if a custom API returned plain text instead of JSON
         return ParsedCommand(
             action = DeviceActionType.AI_CHAT,
-            displayReply = rawText.take(280),
+            displayReply = sanitizeForHud(rawText.take(280)),
             spokenReply = rawText.take(240)
         )
     }
@@ -883,13 +1444,14 @@ class SuaBrain(private val prefs: SuaPreferences) {
         apiKey: String,
         customUrl: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): AiCallOutcome {
         val resolvedProvider = prefs.resolveActiveAiProvider()
         return when (resolvedProvider) {
             AiProviderType.CLAUDE -> {
                 val endpoint = customUrl.ifBlank { "https://api.anthropic.com/v1/messages" }
-                callClaudeEndpoint(userCommand, apiKey, endpoint, userName, assistantName)
+                callClaudeEndpoint(userCommand, apiKey, endpoint, userName, assistantName, speakEn)
             }
             AiProviderType.OPENAI -> {
                 val defaultEndpoint = if (apiKey.startsWith("gsk_")) {
@@ -906,14 +1468,15 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     modelId = defaultModel,
                     providerLabel = if (apiKey.startsWith("gsk_")) "GROQ AI" else "CHATGPT",
                     userName = userName,
-                    assistantName = assistantName
+                    assistantName = assistantName,
+                    speakEn = speakEn
                 )
             }
             AiProviderType.CUSTOM -> {
                 if (customUrl.contains("generativelanguage.googleapis.com")) {
-                    callGeminiWithFallback(userCommand, apiKey, userName, assistantName)
+                    callGeminiWithFallback(userCommand, apiKey, userName, assistantName, speakEn)
                 } else if (customUrl.contains("anthropic.com")) {
-                    callClaudeEndpoint(userCommand, apiKey, customUrl, userName, assistantName)
+                    callClaudeEndpoint(userCommand, apiKey, customUrl, userName, assistantName, speakEn)
                 } else {
                     val endpoint = customUrl.ifBlank { "https://api.openai.com/v1/chat/completions" }
                     callOpenAiCompatibleEndpoint(
@@ -923,12 +1486,13 @@ class SuaBrain(private val prefs: SuaPreferences) {
                         modelId = prefs.getGeminiModel(),
                         providerLabel = "CUSTOM API",
                         userName = userName,
-                        assistantName = assistantName
+                        assistantName = assistantName,
+                        speakEn = speakEn
                     )
                 }
             }
             AiProviderType.GEMINI, AiProviderType.AUTO -> {
-                callGeminiWithFallback(userCommand, apiKey, userName, assistantName)
+                callGeminiWithFallback(userCommand, apiKey, userName, assistantName, speakEn)
             }
         }
     }
@@ -940,10 +1504,11 @@ class SuaBrain(private val prefs: SuaPreferences) {
         modelId: String,
         providerLabel: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): AiCallOutcome {
         return try {
-            val systemPrompt = buildSystemPrompt(userName, assistantName)
+            val systemPrompt = buildSystemPrompt(userName, assistantName, speakEn)
             val messages = JSONArray()
                 .put(JSONObject().put("role", "system").put("content", systemPrompt))
                 .put(JSONObject().put("role", "user").put("content", userCommand))
@@ -984,7 +1549,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 if (content.isBlank()) {
                     return AiCallOutcome.Failure(providerLabel, 500, "Empty response from $endpointUrl")
                 }
-                AiCallOutcome.Success(parseAiJsonResponse(content, assistantName, userName))
+                AiCallOutcome.Success(parseAiJsonResponse(content, assistantName, userName, speakEn))
             }
         } catch (e: Exception) {
             AiCallOutcome.Failure(providerLabel, 0, e.localizedMessage ?: "Connection failed")
@@ -996,10 +1561,11 @@ class SuaBrain(private val prefs: SuaPreferences) {
         apiKey: String,
         endpointUrl: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): AiCallOutcome {
         return try {
-            val systemPrompt = buildSystemPrompt(userName, assistantName)
+            val systemPrompt = buildSystemPrompt(userName, assistantName, speakEn)
             val payload = JSONObject().apply {
                 put("model", "claude-3-5-haiku-latest")
                 put("max_tokens", 600)
@@ -1038,7 +1604,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
                 if (textOut.isBlank()) {
                     return AiCallOutcome.Failure("CLAUDE AI", 500, "Empty response from Claude API")
                 }
-                AiCallOutcome.Success(parseAiJsonResponse(textOut, assistantName, userName))
+                AiCallOutcome.Success(parseAiJsonResponse(textOut, assistantName, userName, speakEn))
             }
         } catch (e: Exception) {
             AiCallOutcome.Failure("CLAUDE AI", 0, e.localizedMessage ?: "Connection error")
@@ -1049,7 +1615,8 @@ class SuaBrain(private val prefs: SuaPreferences) {
         userCommand: String,
         apiKey: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): AiCallOutcome {
         val preferred = prefs.getGeminiModel()
         val candidateModels = (listOf(preferred) + SuaPreferences.SUPPORTED_GEMINI_MODELS).distinct().toMutableList()
@@ -1062,7 +1629,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
             idx++
             if (!triedModels.add(modelId)) continue
 
-            val outcome = callGeminiSingleModel(userCommand, apiKey, modelId, userName, assistantName)
+            val outcome = callGeminiSingleModel(userCommand, apiKey, modelId, userName, assistantName, speakEn)
             when (outcome) {
                 is AiCallOutcome.Success -> {
                     if (modelId != preferred) {
@@ -1089,7 +1656,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
 
         val discoveredModel = discoverAvailableGeminiModel(apiKey, triedModels)
         if (!discoveredModel.isNullOrBlank()) {
-            val outcome = callGeminiSingleModel(userCommand, apiKey, discoveredModel, userName, assistantName)
+            val outcome = callGeminiSingleModel(userCommand, apiKey, discoveredModel, userName, assistantName, speakEn)
             if (outcome is AiCallOutcome.Success) {
                 prefs.setGeminiModel(discoveredModel)
                 return outcome
@@ -1140,10 +1707,11 @@ class SuaBrain(private val prefs: SuaPreferences) {
         apiKey: String,
         modelId: String,
         userName: String,
-        assistantName: String
+        assistantName: String,
+        speakEn: Boolean
     ): AiCallOutcome {
         return try {
-            val systemInstruction = buildSystemPrompt(userName, assistantName)
+            val systemInstruction = buildSystemPrompt(userName, assistantName, speakEn)
 
             val payload = JSONObject().apply {
                 put(
@@ -1208,7 +1776,7 @@ class SuaBrain(private val prefs: SuaPreferences) {
                     return AiCallOutcome.Failure("GEMINI", 500, "Empty response from Gemini model $modelId")
                 }
 
-                AiCallOutcome.Success(parseAiJsonResponse(textOut, assistantName, userName))
+                AiCallOutcome.Success(parseAiJsonResponse(textOut, assistantName, userName, speakEn))
             }
         } catch (e: Exception) {
             AiCallOutcome.Failure("GEMINI", 0, e.localizedMessage ?: "Network failure")

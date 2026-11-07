@@ -9,6 +9,7 @@ import com.example.data.AiProviderType
 import com.example.data.CommandLogEntry
 import com.example.data.CustomVoiceCommand
 import com.example.data.MokoMemoryItem
+import com.example.data.PendingCommsConfirmation
 import com.example.data.PermissionStatusItem
 import com.example.data.QuickContact
 import com.example.data.SuaPreferences
@@ -26,7 +27,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     val prefs = SuaPreferences(appContext)
     val controller = SuaDeviceController(appContext)
-    private val brain = SuaBrain(prefs)
+    private val brain = SuaBrain(prefs, controller)
 
     val status: StateFlow<SuaStatus> = SuaStateRepository.status
     val isBackgroundServiceRunning: StateFlow<Boolean> = SuaStateRepository.isBackgroundServiceRunning
@@ -39,6 +40,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     val isScreenLockedOverlay: StateFlow<Boolean> = SuaStateRepository.isScreenLockedOverlay
     val commandLogs: StateFlow<List<CommandLogEntry>> = SuaStateRepository.commandLogs
     val memoryItems: StateFlow<List<MokoMemoryItem>> = SuaStateRepository.memoryItems
+    val pendingComms: StateFlow<PendingCommsConfirmation?> = SuaStateRepository.pendingComms
     val audioRmsDb: StateFlow<Float> = SuaStateRepository.audioRmsDb
 
     private val _userName = MutableStateFlow(prefs.getUserName())
@@ -61,6 +63,12 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _geminiModel = MutableStateFlow(prefs.getGeminiModel())
     val geminiModel: StateFlow<String> = _geminiModel.asStateFlow()
+
+    private val _kalpaApiKey = MutableStateFlow(prefs.getKalpaApiKey())
+    val kalpaApiKey: StateFlow<String> = _kalpaApiKey.asStateFlow()
+
+    private val _kalpaVoiceId = MutableStateFlow(prefs.getKalpaVoiceId())
+    val kalpaVoiceId: StateFlow<String> = _kalpaVoiceId.asStateFlow()
 
     private val _continuousBgEnabled = MutableStateFlow(prefs.isContinuousBackgroundEnabled())
     val continuousBgEnabled: StateFlow<Boolean> = _continuousBgEnabled.asStateFlow()
@@ -116,6 +124,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _aiProvider.value = prefs.getAiProvider()
         _customApiUrl.value = prefs.getCustomApiUrl()
         _geminiModel.value = prefs.getGeminiModel()
+        _kalpaApiKey.value = prefs.getKalpaApiKey()
+        _kalpaVoiceId.value = prefs.getKalpaVoiceId()
         _wakeWordRequired.value = prefs.isWakeWordRequiredInBackground()
         _lowBatteryWakeMode.value = prefs.isLowBatteryWakeMode()
         _voicePreset.value = prefs.getVoicePreset()
@@ -195,6 +205,24 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         SuaVoiceSpeaker.speak("जी ${_userName.value}, आपका नाम और मेरा नाम ${_assistantName.value} सेव हो गया है! अब आप ओके ${_assistantName.value} बोलकर मुझे बुला सकते हैं।")
     }
 
+    fun saveKalpaVoiceConfig(apiKey: String, voiceId: String) {
+        prefs.saveKalpaApiKey(apiKey)
+        prefs.setKalpaVoiceId(voiceId)
+        _kalpaApiKey.value = prefs.getKalpaApiKey()
+        _kalpaVoiceId.value = prefs.getKalpaVoiceId()
+        val voiceLabel = SuaPreferences.KALPA_VOICE_OPTIONS.firstOrNull { it.id == _kalpaVoiceId.value }?.name ?: "Kalpa Neural Voice"
+        _settingsBannerMessage.value = "KALPA VOICE SAVED // Active Voice: $voiceLabel (kalpalabs.ai)"
+        SuaVoiceSpeaker.speak("नमस्ते ${_userName.value}! कल्पा लैब्स की नई मधुर आवाज़ अब एक्टिव हो गई है।")
+    }
+
+    fun selectKalpaVoice(voiceId: String) {
+        prefs.setKalpaVoiceId(voiceId)
+        _kalpaVoiceId.value = prefs.getKalpaVoiceId()
+        val voiceLabel = SuaPreferences.KALPA_VOICE_OPTIONS.firstOrNull { it.id == _kalpaVoiceId.value }?.name ?: "Kalpa Neural Voice"
+        _settingsBannerMessage.value = "KALPA VOICE UPDATED // Selected: $voiceLabel"
+        SuaVoiceSpeaker.speak("नमस्ते ${_userName.value}! अब मैं कल्पा लैब्स की इसी प्यारी आवाज़ में आपसे बात करूँगी।")
+    }
+
     fun deleteCommandLogItem(logId: Long) {
         SuaStateRepository.deleteCommandLog(logId, prefs)
     }
@@ -223,8 +251,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     fun testVoiceGreeting() {
         val bot = _assistantName.value
         val uName = _userName.value
-        SuaStateRepository.updateLastReply("$bot VOICE TEST // Developed by ${SuaPreferences.DEVELOPER_NAME} for $uName.")
-        SuaVoiceSpeaker.speak("नमस्ते मेरे प्यारे $uName! मेरा नाम $bot है और मुझे मिस्टर शशांक ने डेवलप किया है। जब भी आप ओके $bot या हाय $bot बोलेंगे, मैं तुरंत प्यार से आपका काम करूँगी।")
+        SuaStateRepository.updateLastReply("$bot KALPA NEURAL VOICE // Developed by ${SuaPreferences.DEVELOPER_NAME} for $uName.")
+        SuaVoiceSpeaker.speak("नमस्ते मेरे प्यारे $uName! मेरा नाम $bot है और मुझे मिस्टर शशांक ने डेवलप किया है। जब भी आप हिंदी या इंग्लिश में बोलेंगे, मैं कल्पा लैब्स की असली आवाज़ में तुरंत आपका काम करूँगी।")
     }
 
     fun setAiProvider(provider: AiProviderType) {

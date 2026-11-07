@@ -81,6 +81,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -127,8 +129,9 @@ fun SettingsScreen(
     val aiProvider by viewModel.aiProvider.collectAsStateWithLifecycle()
     val customApiUrl by viewModel.customApiUrl.collectAsStateWithLifecycle()
     val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
+    val kalpaApiKey by viewModel.kalpaApiKey.collectAsStateWithLifecycle()
+    val kalpaVoiceId by viewModel.kalpaVoiceId.collectAsStateWithLifecycle()
     val permissionStatuses by viewModel.permissionStatuses.collectAsStateWithLifecycle()
-    val continuousBgEnabled by viewModel.continuousBgEnabled.collectAsStateWithLifecycle()
     val wakeWordRequired by viewModel.wakeWordRequired.collectAsStateWithLifecycle()
     val lowBatteryWakeMode by viewModel.lowBatteryWakeMode.collectAsStateWithLifecycle()
     val voiceLocale by viewModel.voiceLocale.collectAsStateWithLifecycle()
@@ -148,6 +151,9 @@ fun SettingsScreen(
     var customUrlInput by remember(customApiUrl) { mutableStateOf(customApiUrl) }
     var showApiKeyPlain by remember { mutableStateOf(false) }
 
+    var kalpaKeyInput by remember(kalpaApiKey) { mutableStateOf(kalpaApiKey) }
+    var showKalpaKeyPlain by remember { mutableStateOf(false) }
+
     var customTriggerInput by remember { mutableStateOf("") }
     var customReplyInput by remember { mutableStateOf("") }
 
@@ -157,6 +163,16 @@ fun SettingsScreen(
     var newContactName by remember { mutableStateOf("") }
     var newContactTag by remember { mutableStateOf("") }
     var newContactPhone by remember { mutableStateOf("") }
+
+    val violetGlassBrush = remember {
+        Brush.linearGradient(
+            colors = listOf(
+                SuaCyan.copy(alpha = 0.78f),
+                SuaElectricBlue.copy(alpha = 0.6f),
+                SuaBorder.copy(alpha = 0.8f)
+            )
+        )
+    }
 
     val systemSettingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -226,118 +242,308 @@ fun SettingsScreen(
         viewModel.refreshPermissionsAndHardware()
     }
 
-    Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
-        containerColor = SuaObsidian,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "${assistantName.uppercase()} // SETTINGS & HISTORY",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = SuaTextPrimary,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Text(
-                            text = "DEVELOPED BY ${SuaPreferences.DEVELOPER_NAME} • USER: ${userName.uppercase()}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SuaCyan,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onNavigateBack,
-                        modifier = Modifier.testTag("settings_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to Home",
-                            tint = SuaCyan
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SuaObsidian
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(SuaObsidian, SuaDeepNavy, SuaObsidian)
                 )
             )
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(SuaObsidian)
-                .padding(innerPadding),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 640.dp)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item { Spacer(modifier = Modifier.height(4.dp)) }
-
-                // Feedback Banner
-                item {
-                    AnimatedVisibility(visible = !bannerMessage.isNullOrBlank()) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.clearSettingsBanner() },
-                            colors = CardDefaults.cardColors(containerColor = SuaDeepNavy),
-                            shape = RoundedCornerShape(12.dp)
+    ) {
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                text = "${assistantName.uppercase()} // SETTINGS & HISTORY",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = SuaTextPrimary,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "DEVELOPED BY ${SuaPreferences.DEVELOPER_NAME} • USER: ${userName.uppercase()}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SuaCyan,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.testTag("settings_back_button")
                         ) {
-                            Row(
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to Home",
+                                tint = SuaCyan
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    )
+                )
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 640.dp)
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item { Spacer(modifier = Modifier.height(4.dp)) }
+
+                    // Feedback Banner
+                    item {
+                        AnimatedVisibility(visible = !bannerMessage.isNullOrBlank()) {
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .border(1.5.dp, SuaEmerald, RoundedCornerShape(12.dp))
-                                    .padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .clickable { viewModel.clearSettingsBanner() },
+                                colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
+                                shape = RoundedCornerShape(14.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = "Status",
-                                    tint = SuaEmerald
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = bannerMessage.orEmpty(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = SuaTextPrimary,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.5.dp, SuaEmerald, RoundedCornerShape(14.dp))
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Status",
+                                        tint = SuaEmerald
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = bannerMessage.orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = SuaTextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
-                // SECTION 1: DEVELOPER (MR. SHASHANK), USER NAME & CUSTOM WAKE-WORD NAME
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.5.dp, SuaCyan, RoundedCornerShape(16.dp))
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    // SECTION 1: KALPA LABS NEURAL VOICE API (kalpalabs.ai)
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(SuaDeepNavy)
+                                                .border(1.5.dp, SuaCyan, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.RecordVoiceOver,
+                                                contentDescription = "Kalpa Labs Voice API",
+                                                tint = SuaCyan
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "01 // KALPA LABS NEURAL VOICE API",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = SuaTextPrimary,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                text = "Powered by kalpalabs.ai (Natural Hindi & English Voice)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SuaCyan
+                                            )
+                                        }
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(SuaEmerald.copy(alpha = 0.16f))
+                                            .border(1.dp, SuaEmerald, RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "ACTIVE",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SuaEmerald,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "SELECT KALPA NEURAL VOICE PROFILE:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SuaCyan,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    SuaPreferences.KALPA_VOICE_OPTIONS.forEach { option ->
+                                        FilterChip(
+                                            selected = kalpaVoiceId == option.id,
+                                            onClick = { viewModel.selectKalpaVoice(option.id) },
+                                            label = {
+                                                Text(
+                                                    text = "${option.name} • ${option.subtitle}",
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = SuaCyan,
+                                                selectedLabelColor = SuaObsidian
+                                            )
+                                        )
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = kalpaKeyInput,
+                                    onValueChange = { kalpaKeyInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("kalpa_api_key_input"),
+                                    label = { Text("Kalpa Labs API Key (sk-live-...)") },
+                                    placeholder = { Text("Paste your Kalpa Labs API key") },
+                                    singleLine = true,
+                                    visualTransformation = if (showKalpaKeyPlain) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = {
+                                                    val clip = clipboardManager.getText()?.text
+                                                    if (!clip.isNullOrBlank()) {
+                                                        kalpaKeyInput = clip.trim()
+                                                    }
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentPaste,
+                                                    contentDescription = "Paste Kalpa Key",
+                                                    tint = SuaCyan
+                                                )
+                                            }
+                                            IconButton(onClick = { showKalpaKeyPlain = !showKalpaKeyPlain }) {
+                                                Icon(
+                                                    imageVector = if (showKalpaKeyPlain) {
+                                                        Icons.Default.VisibilityOff
+                                                    } else {
+                                                        Icons.Default.Visibility
+                                                    },
+                                                    contentDescription = "Show or Hide Kalpa Key",
+                                                    tint = SuaTextPrimary
+                                                )
+                                            }
+                                        }
+                                    },
+                                    colors = violetTextFieldColors()
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.saveKalpaVoiceConfig(kalpaKeyInput, kalpaVoiceId)
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("save_kalpa_key_button"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SuaCyan,
+                                            contentColor = SuaObsidian
+                                        )
+                                    ) {
+                                        Icon(Icons.Default.Save, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("SAVE KALPA KEY", fontWeight = FontWeight.ExtraBold)
+                                    }
+
+                                    Button(
+                                        onClick = { viewModel.testVoiceGreeting() },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("test_kalpa_voice_button"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SuaElectricBlue,
+                                            contentColor = SuaTextPrimary
+                                        )
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("TEST VOICE", fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // SECTION 2: DEVELOPER (MR. SHASHANK), USER NAME & CUSTOM WAKE-WORD NAME
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Column {
                                     Text(
-                                        text = "01 // IDENTITY, USER & WAKE-WORD NAME",
+                                        text = "02 // IDENTITY, USER & WAKE-WORD NAME",
                                         style = MaterialTheme.typography.titleMedium,
                                         color = SuaTextPrimary,
                                         fontWeight = FontWeight.ExtraBold
@@ -349,1026 +555,1022 @@ fun SettingsScreen(
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
-                            }
 
-                            Text(
-                                text = "When anyone asks 'Who developed you?' or 'किसने डेवलप किया है?', the assistant proudly answers: ${SuaPreferences.DEVELOPER_NAME}.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = SuaTextSecondary
-                            )
-
-                            OutlinedTextField(
-                                value = userNameInput,
-                                onValueChange = { userNameInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("user_name_input"),
-                                label = { Text("Your User Name (कौन यूज कर रहा है)") },
-                                placeholder = { Text("e.g. Shashank") },
-                                singleLine = true,
-                                colors = sharpTextFieldColors()
-                            )
-
-                            OutlinedTextField(
-                                value = assistantNameInput,
-                                onValueChange = { assistantNameInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("assistant_name_input"),
-                                label = { Text("Assistant Name / Wake-Word (e.g. Moko)") },
-                                placeholder = { Text("Say 'Ok Moko' or 'Hi <Name>' to wake") },
-                                singleLine = true,
-                                colors = sharpTextFieldColors()
-                            )
-
-                            Button(
-                                onClick = {
-                                    viewModel.saveIdentityProfile(userNameInput, assistantNameInput)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                                    .border(1.dp, SuaTextPrimary, RoundedCornerShape(10.dp))
-                                    .testTag("save_identity_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SuaCyan,
-                                    contentColor = SuaObsidian
-                                )
-                            ) {
-                                Icon(Icons.Default.Save, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "SAVE USER NAME & WAKE-WORD ('OK ${assistantNameInput.uppercase()}')",
-                                    fontWeight = FontWeight.ExtraBold
+                                    text = "Whenever anyone asks 'Who developed you?' in Hindi or English, the assistant proudly answers: ${SuaPreferences.DEVELOPER_NAME}.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SuaTextSecondary
                                 )
-                            }
-                        }
-                    }
-                }
 
-                // SECTION 2: UNIVERSAL MULTI-AI API HUB (Gemini, ChatGPT, Claude, or Custom API Link + Key)
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.5.dp, SuaCyan, RoundedCornerShape(16.dp))
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(SuaDeepNavy)
-                                            .border(1.5.dp, SuaCyan, CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Key,
-                                            contentDescription = "Universal AI API Hub",
-                                            tint = SuaCyan
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = "02 // UNIVERSAL MULTI-AI API HUB",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = SuaTextPrimary,
-                                            fontWeight = FontWeight.ExtraBold
-                                        )
-                                        Text(
-                                            text = "Supports Gemini, ChatGPT, Claude, Groq & Any Custom Link",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = SuaCyan
-                                        )
-                                    }
-                                }
-
-                                Box(
+                                OutlinedTextField(
+                                    value = userNameInput,
+                                    onValueChange = { userNameInput = it },
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(SuaDeepNavy)
-                                        .border(
-                                            1.dp,
-                                            if (hasEffectiveApiKey) SuaEmerald else SuaAmber,
-                                            RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = if (hasEffectiveApiKey) "AI LINKED" else "OFFLINE",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (hasEffectiveApiKey) SuaEmerald else SuaAmber,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
+                                        .fillMaxWidth()
+                                        .testTag("user_name_input"),
+                                    label = { Text("Your User Name (Active User)") },
+                                    placeholder = { Text("e.g. Shashank") },
+                                    singleLine = true,
+                                    colors = violetTextFieldColors()
+                                )
 
-                            Text(
-                                text = "SELECT AI PROVIDER (OR LEAVE ON AUTO-DETECT FROM KEY):",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaCyan,
-                                fontWeight = FontWeight.Bold
-                            )
+                                OutlinedTextField(
+                                    value = assistantNameInput,
+                                    onValueChange = { assistantNameInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("assistant_name_input"),
+                                    label = { Text("Assistant Name / Wake-Word (e.g. Moko)") },
+                                    placeholder = { Text("Say 'Ok Moko' or 'Hi <Name>' to wake") },
+                                    singleLine = true,
+                                    colors = violetTextFieldColors()
+                                )
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                AiProviderType.entries.forEach { prov ->
-                                    FilterChip(
-                                        selected = aiProvider == prov,
-                                        onClick = { viewModel.setAiProvider(prov) },
-                                        label = {
-                                            Text(
-                                                text = prov.displayName,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = SuaCyan,
-                                            selectedLabelColor = SuaObsidian
-                                        )
-                                    )
-                                }
-                            }
-
-                            OutlinedTextField(
-                                value = apiKeyInput,
-                                onValueChange = { apiKeyInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("api_key_input"),
-                                label = { Text("API Key (Gemini AIza... / ChatGPT sk-... / Claude sk-ant-...)") },
-                                placeholder = { Text("Paste any AI API Key here") },
-                                singleLine = true,
-                                visualTransformation = if (showApiKeyPlain) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                                trailingIcon = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(
-                                            onClick = {
-                                                val clipText = clipboardManager.getText()?.text
-                                                if (!clipText.isNullOrBlank()) {
-                                                    apiKeyInput = clipText.trim()
-                                                }
-                                            },
-                                            modifier = Modifier.testTag("paste_api_key_button")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ContentPaste,
-                                                contentDescription = "Paste API Key",
-                                                tint = SuaCyan
-                                            )
-                                        }
-                                        IconButton(onClick = { showApiKeyPlain = !showApiKeyPlain }) {
-                                            Icon(
-                                                imageVector = if (showApiKeyPlain) {
-                                                    Icons.Default.VisibilityOff
-                                                } else {
-                                                    Icons.Default.Visibility
-                                                },
-                                                contentDescription = "Toggle API Key Visibility",
-                                                tint = SuaTextPrimary
-                                            )
-                                        }
-                                    }
-                                },
-                                colors = sharpTextFieldColors()
-                            )
-
-                            OutlinedTextField(
-                                value = customUrlInput,
-                                onValueChange = { customUrlInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("custom_api_url_input"),
-                                label = { Text("API Website Link / Endpoint URL (Optional)") },
-                                placeholder = { Text("Leave blank for automatic official URL, or paste custom API URL") },
-                                singleLine = true,
-                                colors = sharpTextFieldColors()
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
                                 Button(
                                     onClick = {
-                                        viewModel.saveApiConfiguration(apiKeyInput, customUrlInput)
+                                        viewModel.saveIdentityProfile(userNameInput, assistantNameInput)
                                     },
                                     modifier = Modifier
-                                        .weight(1f)
+                                        .fillMaxWidth()
                                         .height(50.dp)
-                                        .border(1.dp, SuaTextPrimary, RoundedCornerShape(10.dp))
-                                        .testTag("save_api_key_button"),
-                                    shape = RoundedCornerShape(10.dp),
+                                        .testTag("save_identity_button"),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = SuaEmerald,
+                                        containerColor = SuaCyan,
                                         contentColor = SuaObsidian
                                     )
                                 ) {
-                                    Icon(Icons.Default.Save, contentDescription = "Save API Key & Link")
+                                    Icon(Icons.Default.Save, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("SAVE API & LINK", fontWeight = FontWeight.ExtraBold)
-                                }
-
-                                OutlinedButton(
-                                    onClick = {
-                                        apiKeyInput = ""
-                                        customUrlInput = ""
-                                        viewModel.deleteApiKey()
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(50.dp)
-                                        .testTag("delete_api_key_button"),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, SuaCrimson),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = SuaCrimson
-                                    )
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete API Key")
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("CLEAR API", fontWeight = FontWeight.ExtraBold)
-                                }
-                            }
-
-                            Text(
-                                text = "GEMINI MODEL VERSION (AUTO-DISCOVERY ENABLED):",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaCyan,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                SuaPreferences.SUPPORTED_GEMINI_MODELS.forEach { mId ->
-                                    FilterChip(
-                                        selected = geminiModel == mId,
-                                        onClick = { viewModel.setGeminiModel(mId) },
-                                        label = { Text(mId) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = SuaCyan,
-                                            selectedLabelColor = SuaObsidian
-                                        )
+                                    Text(
+                                        text = "SAVE USER NAME & WAKE-WORD ('OK ${assistantNameInput.uppercase()}')",
+                                        fontWeight = FontWeight.ExtraBold
                                     )
                                 }
                             }
                         }
                     }
-                }
 
-                // SECTION 3: AFFECTIONATE VOICE PRESETS ("प्यार से बात करे"), SLIDERS & CUSTOM VOICE COMMANDS
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.5.dp, SuaTextPrimary, RoundedCornerShape(16.dp))
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                    // SECTION 3: UNIVERSAL MULTI-AI API HUB (Gemini, ChatGPT, Claude, or Custom API Link + Key)
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.RecordVoiceOver,
-                                    contentDescription = null,
-                                    tint = SuaCyan
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "03 // SWEET VOICE PROFILES & 'OK GOOGLE' WAKE",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = SuaTextPrimary,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                    Text(
-                                        text = "Choose affectionate voice tone, pitch/speed & custom commands",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = SuaCyan
-                                    )
-                                }
-                            }
-
-                            Text(
-                                text = "SELECT VOICE TONE PRESET:",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaCyan,
-                                fontWeight = FontWeight.Bold
-                            )
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                VoicePreset.entries.forEach { preset ->
-                                    FilterChip(
-                                        selected = voicePreset == preset,
-                                        onClick = { viewModel.selectVoicePreset(preset) },
-                                        label = { Text(preset.label, fontWeight = FontWeight.Bold) },
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = SuaCyan,
-                                            selectedLabelColor = SuaObsidian
-                                        )
-                                    )
-                                }
-                            }
-
-                            // Pitch & Speed Sliders
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(SuaDeepNavy)
-                                    .border(1.dp, SuaBorder, RoundedCornerShape(10.dp))
-                                    .padding(12.dp)
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Voice Sweetness / Pitch", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
-                                    Text(String.format("%.2fx", voicePitch), color = SuaCyan, fontWeight = FontWeight.Bold)
-                                }
-                                Slider(
-                                    value = voicePitch,
-                                    onValueChange = { viewModel.updateVoicePitch(it) },
-                                    valueRange = 0.6f..1.6f,
-                                    colors = SliderDefaults.colors(thumbColor = SuaCyan, activeTrackColor = SuaCyan)
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("Speaking Speed", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
-                                    Text(String.format("%.2fx", voiceSpeed), color = SuaEmerald, fontWeight = FontWeight.Bold)
-                                }
-                                Slider(
-                                    value = voiceSpeed,
-                                    onValueChange = { viewModel.updateVoiceSpeed(it) },
-                                    valueRange = 0.6f..1.5f,
-                                    colors = SliderDefaults.colors(thumbColor = SuaEmerald, activeTrackColor = SuaEmerald)
-                                )
-                            }
-
-                            // Low-Battery "Ok Google" Style Wake Mode Toggle
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "'Ok Google' Style Low-Battery Background Wake",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SuaTextPrimary
-                                    )
-                                    Text(
-                                        text = "Smart duty-cycle listening for 'Ok $assistantName' / 'Hi $assistantName' with minimal battery drain",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = SuaTextSecondary
-                                    )
-                                }
-                                Switch(
-                                    checked = lowBatteryWakeMode,
-                                    onCheckedChange = { viewModel.setLowBatteryWakeMode(it) },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = SuaObsidian,
-                                        checkedTrackColor = SuaEmerald
-                                    )
-                                )
-                            }
-
-                            // Wake-Word Required Switch
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Require 'Ok $assistantName' / 'Hi $assistantName' Wake-Word",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = SuaTextPrimary
-                                    )
-                                    Text(
-                                        text = "Prevents accidental triggers from background noise",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = SuaTextSecondary
-                                    )
-                                }
-                                Switch(
-                                    checked = wakeWordRequired,
-                                    onCheckedChange = { viewModel.setWakeWordRequired(it) },
-                                    modifier = Modifier.testTag("wake_word_switch"),
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = SuaObsidian,
-                                        checkedTrackColor = SuaCyan
-                                    )
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                FilterChip(
-                                    selected = voiceLocale == "hi-IN",
-                                    onClick = { viewModel.setVoiceLanguage("hi-IN") },
-                                    label = { Text("Hindi Voice (hi-IN)", fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = SuaCyan,
-                                        selectedLabelColor = SuaObsidian
-                                    )
-                                )
-                                FilterChip(
-                                    selected = voiceLocale == "en-IN",
-                                    onClick = { viewModel.setVoiceLanguage("en-IN") },
-                                    label = { Text("Indian English (en-IN)", fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = SuaCyan,
-                                        selectedLabelColor = SuaObsidian
-                                    )
-                                )
-                            }
-
-                            Button(
-                                onClick = { viewModel.testVoiceGreeting() },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .border(1.dp, SuaTextPrimary, RoundedCornerShape(10.dp))
-                                    .testTag("test_voice_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SuaElectricBlue,
-                                    contentColor = SuaTextPrimary
-                                )
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("TEST SWEET VOICE OUTPUT", fontWeight = FontWeight.ExtraBold)
-                            }
-
-                            HorizontalDivider(color = SuaBorder)
-
-                            // CUSTOM VOICE COMMAND BUILDER
-                            Text(
-                                text = "CUSTOM VOICE COMMANDS (ADD YOUR OWN COMMANDS):",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaCyan,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-
-                            OutlinedTextField(
-                                value = customTriggerInput,
-                                onValueChange = { customTriggerInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("custom_cmd_trigger_input"),
-                                label = { Text("When I Say (Trigger Phrase)") },
-                                placeholder = { Text("e.g. सिस्टम कोड बताओ / Good morning") },
-                                singleLine = true,
-                                colors = sharpTextFieldColors()
-                            )
-
-                            OutlinedTextField(
-                                value = customReplyInput,
-                                onValueChange = { customReplyInput = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("custom_cmd_reply_input"),
-                                label = { Text("Assistant Should Speak / Reply") },
-                                placeholder = { Text("e.g. गुड मॉर्निंग शशांक बॉस, आपका दिन शुभ हो!") },
-                                singleLine = true,
-                                colors = sharpTextFieldColors()
-                            )
-
-                            Button(
-                                onClick = {
-                                    if (customTriggerInput.isNotBlank() && customReplyInput.isNotBlank()) {
-                                        viewModel.addCustomVoiceCommand(customTriggerInput, customReplyInput)
-                                        customTriggerInput = ""
-                                        customReplyInput = ""
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp)
-                                    .testTag("add_custom_cmd_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SuaCyan,
-                                    contentColor = SuaObsidian
-                                )
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("ADD CUSTOM VOICE COMMAND", fontWeight = FontWeight.ExtraBold)
-                            }
-
-                            customCommands.forEach { cmd ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(SuaDeepNavy)
-                                        .border(1.dp, SuaBorder, RoundedCornerShape(10.dp))
-                                        .padding(12.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(SuaDeepNavy)
+                                                .border(1.5.dp, SuaCyan, CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Key,
+                                                contentDescription = "Universal AI API Hub",
+                                                tint = SuaCyan
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "03 // UNIVERSAL MULTI-AI API HUB",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = SuaTextPrimary,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                text = "Supports Gemini, ChatGPT, Claude, Groq & Custom Links",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SuaCyan
+                                            )
+                                        }
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(SuaDeepNavy)
+                                            .border(
+                                                1.dp,
+                                                if (hasEffectiveApiKey) SuaEmerald else SuaAmber,
+                                                RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
                                         Text(
-                                            text = "Say: \"${cmd.triggerPhrase}\"",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = SuaCyan,
+                                            text = if (hasEffectiveApiKey) "AI LINKED" else "OFFLINE",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (hasEffectiveApiKey) SuaEmerald else SuaAmber,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Text(
-                                            text = "Reply: ${cmd.spokenResponse}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = SuaTextPrimary
+                                    }
+                                }
+
+                                Text(
+                                    text = "SELECT AI PROVIDER (OR LEAVE ON AUTO-DETECT):",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SuaCyan,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AiProviderType.entries.forEach { prov ->
+                                        FilterChip(
+                                            selected = aiProvider == prov,
+                                            onClick = { viewModel.setAiProvider(prov) },
+                                            label = {
+                                                Text(
+                                                    text = prov.displayName,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = SuaCyan,
+                                                selectedLabelColor = SuaObsidian
+                                            )
                                         )
                                     }
-                                    IconButton(onClick = { viewModel.removeCustomVoiceCommand(cmd.id) }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete Custom Command",
-                                            tint = SuaCrimson
+                                }
+
+                                OutlinedTextField(
+                                    value = apiKeyInput,
+                                    onValueChange = { apiKeyInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("api_key_input"),
+                                    label = { Text("API Key (Gemini AIza... / ChatGPT sk-... / Claude sk-ant-...)") },
+                                    placeholder = { Text("Paste any AI API Key here") },
+                                    singleLine = true,
+                                    visualTransformation = if (showApiKeyPlain) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                    trailingIcon = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = {
+                                                    val clipText = clipboardManager.getText()?.text
+                                                    if (!clipText.isNullOrBlank()) {
+                                                        apiKeyInput = clipText.trim()
+                                                    }
+                                                },
+                                                modifier = Modifier.testTag("paste_api_key_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentPaste,
+                                                    contentDescription = "Paste API Key",
+                                                    tint = SuaCyan
+                                                )
+                                            }
+                                            IconButton(onClick = { showApiKeyPlain = !showApiKeyPlain }) {
+                                                Icon(
+                                                    imageVector = if (showApiKeyPlain) {
+                                                        Icons.Default.VisibilityOff
+                                                    } else {
+                                                        Icons.Default.Visibility
+                                                    },
+                                                    contentDescription = "Toggle API Key Visibility",
+                                                    tint = SuaTextPrimary
+                                                )
+                                            }
+                                        }
+                                    },
+                                    colors = violetTextFieldColors()
+                                )
+
+                                OutlinedTextField(
+                                    value = customUrlInput,
+                                    onValueChange = { customUrlInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("custom_api_url_input"),
+                                    label = { Text("API Website Link / Endpoint URL (Optional)") },
+                                    placeholder = { Text("Leave blank for automatic official URL, or paste custom API URL") },
+                                    singleLine = true,
+                                    colors = violetTextFieldColors()
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.saveApiConfiguration(apiKeyInput, customUrlInput)
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(50.dp)
+                                            .testTag("save_api_key_button"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SuaEmerald,
+                                            contentColor = SuaObsidian
+                                        )
+                                    ) {
+                                        Icon(Icons.Default.Save, contentDescription = "Save API Key & Link")
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("SAVE API & LINK", fontWeight = FontWeight.ExtraBold)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            apiKeyInput = ""
+                                            customUrlInput = ""
+                                            viewModel.deleteApiKey()
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(50.dp)
+                                            .testTag("delete_api_key_button"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.5.dp, SuaCrimson),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = SuaCrimson
+                                        )
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete API Key")
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("CLEAR API", fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+
+                                Text(
+                                    text = "GEMINI MODEL VERSION (AUTO-DISCOVERY ENABLED):",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SuaCyan,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    SuaPreferences.SUPPORTED_GEMINI_MODELS.forEach { mId ->
+                                        FilterChip(
+                                            selected = geminiModel == mId,
+                                            onClick = { viewModel.setGeminiModel(mId) },
+                                            label = { Text(mId) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = SuaCyan,
+                                                selectedLabelColor = SuaObsidian
+                                            )
                                         )
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // SECTION 4: CONVERSATION HISTORY & MEMORY VAULT (Moved inside Settings as requested!)
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.5.dp, SuaCyan, RoundedCornerShape(16.dp))
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    // SECTION 4: BACKGROUND WAKE ENGINE, VOICE TUNING & CUSTOM COMMANDS
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector = Icons.Default.History,
+                                        imageVector = Icons.Default.RecordVoiceOver,
                                         contentDescription = null,
                                         tint = SuaCyan
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(
-                                            text = "04 // CHAT HISTORY & MEMORY VAULT",
+                                            text = "04 // WAKE ENGINE & CUSTOM VOICE COMMANDS",
                                             style = MaterialTheme.typography.titleMedium,
                                             color = SuaTextPrimary,
                                             fontWeight = FontWeight.ExtraBold
                                         )
                                         Text(
-                                            text = "Keep important chats in Memory or delete history anytime",
+                                            text = "Configure low-battery wake mode, voice tone & custom commands",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SuaCyan
                                         )
                                     }
                                 }
 
-                                if (historySubTab == 0 && commandLogs.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = { viewModel.clearCommandHistory() },
-                                        modifier = Modifier.testTag("clear_logs_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.DeleteSweep,
-                                            contentDescription = "Clear All History",
-                                            tint = SuaCrimson
-                                        )
-                                    }
-                                } else if (historySubTab == 1 && memoryItems.isNotEmpty()) {
-                                    IconButton(
-                                        onClick = { viewModel.clearAllMemories() },
-                                        modifier = Modifier.testTag("clear_memories_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.DeleteSweep,
-                                            contentDescription = "Clear All Memories",
-                                            tint = SuaCrimson
-                                        )
-                                    }
-                                }
-                            }
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                FilterChip(
-                                    selected = historySubTab == 0,
-                                    onClick = { historySubTab = 0 },
-                                    modifier = Modifier.testTag("tab_chat_history"),
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.History,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    },
-                                    label = { Text("History (${commandLogs.size})", fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = SuaCyan,
-                                        selectedLabelColor = SuaObsidian
-                                    )
-                                )
-
-                                FilterChip(
-                                    selected = historySubTab == 1,
-                                    onClick = { historySubTab = 1 },
-                                    modifier = Modifier.testTag("tab_memory_vault"),
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.Psychology,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    },
-                                    label = { Text("Memory Vault (${memoryItems.size})", fontWeight = FontWeight.Bold) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = SuaEmerald,
-                                        selectedLabelColor = SuaObsidian
-                                    )
-                                )
-                            }
-
-                            if (historySubTab == 0) {
-                                if (commandLogs.isEmpty()) {
-                                    Text(
-                                        text = "No conversation history yet. Speak or message on the main screen and your logs will appear here.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = SuaTextSecondary
-                                    )
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        commandLogs.forEach { entry ->
-                                            SettingsHistoryRow(
-                                                entry = entry,
-                                                onPinToMemory = { viewModel.pinChatToMemory(entry) },
-                                                onDelete = { viewModel.deleteCommandLogItem(entry.id) }
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = newMemoryText,
-                                        onValueChange = { newMemoryText = it },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("add_memory_input"),
-                                        placeholder = { Text("Add a fact to remember...") },
-                                        singleLine = true,
-                                        colors = sharpTextFieldColors()
-                                    )
-                                    Button(
-                                        onClick = {
-                                            if (newMemoryText.isNotBlank()) {
-                                                viewModel.addManualMemoryFact(newMemoryText)
-                                                newMemoryText = ""
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = SuaEmerald,
-                                            contentColor = SuaObsidian
-                                        ),
-                                        modifier = Modifier.testTag("save_memory_button")
-                                    ) {
-                                        Text("KEEP", fontWeight = FontWeight.ExtraBold)
-                                    }
-                                }
-
-                                if (memoryItems.isEmpty()) {
-                                    Text(
-                                        text = "Memory Vault is empty. Add a fact above or tap the Bookmark icon on any chat item.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = SuaTextSecondary
-                                    )
-                                } else {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        memoryItems.forEach { mem ->
-                                            SettingsMemoryRow(
-                                                item = mem,
-                                                onDelete = { viewModel.deleteMemoryFact(mem.id) }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // SECTION 5: SYSTEM PERMISSIONS MATRIX
-                item {
-                    val grantedCount = permissionStatuses.count { it.isGranted }
-                    val totalCount = permissionStatuses.size
-                    val allGranted = grantedCount == totalCount
-
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(
-                                    1.5.dp,
-                                    if (allGranted) SuaEmerald else SuaCyan,
-                                    RoundedCornerShape(16.dp)
-                                )
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Security,
-                                        contentDescription = "Permissions Matrix",
-                                        tint = SuaCyan
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column {
-                                        Text(
-                                            text = "05 // SYSTEM PERMISSIONS MATRIX",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = SuaTextPrimary,
-                                            fontWeight = FontWeight.ExtraBold
-                                        )
-                                        Text(
-                                            text = "ACTIVE SUBSYSTEMS: $grantedCount / $totalCount ONLINE",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (allGranted) SuaEmerald else SuaAmber
-                                        )
-                                    }
-                                }
-                            }
-
-                            Button(
-                                onClick = {
-                                    if (!viewModel.controller.areAllRuntimePermissionsGranted()) {
-                                        val runtimePerms =
-                                            viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
-                                        multiplePermissionsLauncher.launch(runtimePerms)
-                                    } else if (!viewModel.controller.canWriteSystemSettings()) {
-                                        launchWriteSettingsIntent()
-                                    } else if (!viewModel.controller.isDeviceAdminActive()) {
-                                        launchDeviceAdminIntent()
-                                    } else if (!viewModel.controller.isIgnoringBatteryOptimizations()) {
-                                        launchBatteryOptIntent()
-                                    } else {
-                                        val runtimePerms =
-                                            viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
-                                        multiplePermissionsLauncher.launch(runtimePerms)
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(52.dp)
-                                    .border(1.dp, SuaTextPrimary, RoundedCornerShape(10.dp))
-                                    .testTag("allow_all_permissions_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SuaCyan,
-                                    contentColor = SuaObsidian
-                                )
-                            ) {
-                                Icon(Icons.Default.Security, contentDescription = null)
-                                Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "GRANT ALL SYSTEM PERMISSIONS",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.ExtraBold
+                                    text = "OFFLINE FALLBACK VOICE TONE PRESET:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SuaCyan,
+                                    fontWeight = FontWeight.Bold
                                 )
-                            }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                permissionStatuses.forEach { perm ->
-                                    PermissionRowItem(
-                                        item = perm,
-                                        onGrantClick = {
-                                            when (perm.id) {
-                                                "WRITE_SETTINGS" -> launchWriteSettingsIntent()
-                                                "DEVICE_ADMIN" -> launchDeviceAdminIntent()
-                                                "BATTERY_OPT" -> launchBatteryOptIntent()
-                                                else -> multiplePermissionsLauncher.launch(arrayOf(perm.id))
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // SECTION 6: SPEED DIAL / VOICE CONTACTS
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.5.dp, SuaBorder, RoundedCornerShape(16.dp))
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text(
-                                text = "06 // VOICE SPEED-DIAL DIRECTORY",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = SuaTextPrimary,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-
-                            quickContacts.forEach { contact ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(SuaDeepNavy)
-                                        .border(1.dp, SuaBorder, RoundedCornerShape(10.dp))
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = null,
-                                            tint = SuaCyan,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                text = contact.name,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                color = SuaTextPrimary
+                                    VoicePreset.entries.forEach { preset ->
+                                        FilterChip(
+                                            selected = voicePreset == preset,
+                                            onClick = { viewModel.selectVoicePreset(preset) },
+                                            label = { Text(preset.label, fontWeight = FontWeight.Bold) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = SuaCyan,
+                                                selectedLabelColor = SuaObsidian
                                             )
-                                            Text(
-                                                text = "${contact.aliasTag} • ${contact.phoneNumber}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = SuaCyan
-                                            )
-                                        }
-                                    }
-                                    IconButton(onClick = { viewModel.removeQuickContact(contact.name) }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Remove Contact",
-                                            tint = SuaCrimson
                                         )
                                     }
                                 }
-                            }
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = newContactName,
-                                    onValueChange = { newContactName = it },
+                                // Pitch & Speed Sliders
+                                Column(
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("contact_name_input"),
-                                    label = { Text("Name (e.g. Rahul)") },
-                                    singleLine = true,
-                                    colors = sharpTextFieldColors()
-                                )
-                                OutlinedTextField(
-                                    value = newContactTag,
-                                    onValueChange = { newContactTag = it },
-                                    modifier = Modifier.weight(1f),
-                                    label = { Text("Hindi Alias") },
-                                    singleLine = true,
-                                    colors = sharpTextFieldColors()
-                                )
-                            }
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(SuaDeepNavy)
+                                        .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                                        .padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Voice Sweetness / Pitch", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
+                                        Text(String.format("%.2fx", voicePitch), color = SuaCyan, fontWeight = FontWeight.Bold)
+                                    }
+                                    Slider(
+                                        value = voicePitch,
+                                        onValueChange = { viewModel.updateVoicePitch(it) },
+                                        valueRange = 0.6f..1.6f,
+                                        colors = SliderDefaults.colors(thumbColor = SuaCyan, activeTrackColor = SuaCyan)
+                                    )
 
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = newContactPhone,
-                                    onValueChange = { newContactPhone = it },
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Speaking Speed", color = SuaTextPrimary, fontWeight = FontWeight.Bold)
+                                        Text(String.format("%.2fx", voiceSpeed), color = SuaEmerald, fontWeight = FontWeight.Bold)
+                                    }
+                                    Slider(
+                                        value = voiceSpeed,
+                                        onValueChange = { viewModel.updateVoiceSpeed(it) },
+                                        valueRange = 0.6f..1.5f,
+                                        colors = SliderDefaults.colors(thumbColor = SuaEmerald, activeTrackColor = SuaEmerald)
+                                    )
+                                }
+
+                                // Low-Battery "Ok Google" Style Wake Mode Toggle
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "'Ok Google' Style Low-Battery Background Wake",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SuaTextPrimary
+                                        )
+                                        Text(
+                                            text = "Smart duty-cycle listening for 'Ok $assistantName' / 'Hi $assistantName' with minimal battery drain",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = lowBatteryWakeMode,
+                                        onCheckedChange = { viewModel.setLowBatteryWakeMode(it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = SuaObsidian,
+                                            checkedTrackColor = SuaEmerald
+                                        )
+                                    )
+                                }
+
+                                // Wake-Word Required Switch
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Require 'Ok $assistantName' / 'Hi $assistantName' Wake-Word",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SuaTextPrimary
+                                        )
+                                        Text(
+                                            text = "Prevents accidental triggers from background noise",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = wakeWordRequired,
+                                        onCheckedChange = { viewModel.setWakeWordRequired(it) },
+                                        modifier = Modifier.testTag("wake_word_switch"),
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = SuaObsidian,
+                                            checkedTrackColor = SuaCyan
+                                        )
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = voiceLocale == "hi-IN",
+                                        onClick = { viewModel.setVoiceLanguage("hi-IN") },
+                                        label = { Text("Hindi + English Recognition (hi-IN)", fontWeight = FontWeight.Bold) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = SuaCyan,
+                                            selectedLabelColor = SuaObsidian
+                                        )
+                                    )
+                                    FilterChip(
+                                        selected = voiceLocale == "en-IN",
+                                        onClick = { viewModel.setVoiceLanguage("en-IN") },
+                                        label = { Text("English Recognition (en-IN)", fontWeight = FontWeight.Bold) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = SuaCyan,
+                                            selectedLabelColor = SuaObsidian
+                                        )
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { viewModel.testVoiceGreeting() },
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("contact_phone_input"),
-                                    label = { Text("Phone Number") },
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("test_voice_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = SuaElectricBlue,
+                                        contentColor = SuaTextPrimary
+                                    )
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("TEST KALPA NEURAL VOICE OUTPUT", fontWeight = FontWeight.ExtraBold)
+                                }
+
+                                HorizontalDivider(color = SuaBorder)
+
+                                // CUSTOM VOICE COMMAND BUILDER (100% English UI Labels & Placeholders)
+                                Text(
+                                    text = "CUSTOM VOICE COMMANDS (ADD YOUR OWN COMMANDS):",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SuaCyan,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+
+                                OutlinedTextField(
+                                    value = customTriggerInput,
+                                    onValueChange = { customTriggerInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("custom_cmd_trigger_input"),
+                                    label = { Text("When I Say (Trigger Phrase)") },
+                                    placeholder = { Text("e.g. Good morning / Enter system code") },
                                     singleLine = true,
-                                    colors = sharpTextFieldColors()
+                                    colors = violetTextFieldColors()
+                                )
+
+                                OutlinedTextField(
+                                    value = customReplyInput,
+                                    onValueChange = { customReplyInput = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("custom_cmd_reply_input"),
+                                    label = { Text("Assistant Should Speak / Reply") },
+                                    placeholder = { Text("e.g. Good morning Boss Shashank, have a great day!") },
+                                    singleLine = true,
+                                    colors = violetTextFieldColors()
                                 )
 
                                 Button(
                                     onClick = {
-                                        if (newContactName.isNotBlank() && newContactPhone.isNotBlank()) {
-                                            viewModel.addOrUpdateQuickContact(
-                                                name = newContactName,
-                                                aliasTag = newContactTag,
-                                                phone = newContactPhone
-                                            )
-                                            newContactName = ""
-                                            newContactTag = ""
-                                            newContactPhone = ""
+                                        if (customTriggerInput.isNotBlank() && customReplyInput.isNotBlank()) {
+                                            viewModel.addCustomVoiceCommand(customTriggerInput, customReplyInput)
+                                            customTriggerInput = ""
+                                            customReplyInput = ""
                                         }
                                     },
                                     modifier = Modifier
-                                        .height(54.dp)
-                                        .testTag("add_contact_button"),
-                                    shape = RoundedCornerShape(10.dp),
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("add_custom_cmd_button"),
+                                    shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = SuaCyan,
                                         contentColor = SuaObsidian
                                     )
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Add Contact")
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("ADD", fontWeight = FontWeight.ExtraBold)
+                                    Icon(Icons.Default.Add, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("ADD CUSTOM VOICE COMMAND", fontWeight = FontWeight.ExtraBold)
+                                }
+
+                                customCommands.forEach { cmd ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(SuaDeepNavy)
+                                            .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Trigger: \"${cmd.triggerPhrase}\"",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = SuaCyan,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "Spoken Reply: ${cmd.spokenResponse}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = SuaTextPrimary
+                                            )
+                                        }
+                                        IconButton(onClick = { viewModel.removeCustomVoiceCommand(cmd.id) }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete Custom Command",
+                                                tint = SuaCrimson
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                item { Spacer(modifier = Modifier.height(28.dp)) }
+                    // SECTION 5: CONVERSATION HISTORY & MEMORY VAULT
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.History,
+                                            contentDescription = null,
+                                            tint = SuaCyan
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "05 // CHAT HISTORY & MEMORY VAULT",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = SuaTextPrimary,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                text = "Keep important chats in Memory or delete history anytime",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = SuaCyan
+                                            )
+                                        }
+                                    }
+
+                                    if (historySubTab == 0 && commandLogs.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { viewModel.clearCommandHistory() },
+                                            modifier = Modifier.testTag("clear_logs_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteSweep,
+                                                contentDescription = "Clear All History",
+                                                tint = SuaCrimson
+                                            )
+                                        }
+                                    } else if (historySubTab == 1 && memoryItems.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { viewModel.clearAllMemories() },
+                                            modifier = Modifier.testTag("clear_memories_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteSweep,
+                                                contentDescription = "Clear All Memories",
+                                                tint = SuaCrimson
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    FilterChip(
+                                        selected = historySubTab == 0,
+                                        onClick = { historySubTab = 0 },
+                                        modifier = Modifier.testTag("tab_chat_history"),
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.History,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        label = { Text("History (${commandLogs.size})", fontWeight = FontWeight.Bold) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = SuaCyan,
+                                            selectedLabelColor = SuaObsidian
+                                        )
+                                    )
+
+                                    FilterChip(
+                                        selected = historySubTab == 1,
+                                        onClick = { historySubTab = 1 },
+                                        modifier = Modifier.testTag("tab_memory_vault"),
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Psychology,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        label = { Text("Memory Vault (${memoryItems.size})", fontWeight = FontWeight.Bold) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = SuaEmerald,
+                                            selectedLabelColor = SuaObsidian
+                                        )
+                                    )
+                                }
+
+                                if (historySubTab == 0) {
+                                    if (commandLogs.isEmpty()) {
+                                        Text(
+                                            text = "No conversation history yet. Speak or message on the main screen and your logs will appear here.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary
+                                        )
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            commandLogs.forEach { entry ->
+                                                SettingsHistoryRow(
+                                                    entry = entry,
+                                                    onPinToMemory = { viewModel.pinChatToMemory(entry) },
+                                                    onDelete = { viewModel.deleteCommandLogItem(entry.id) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = newMemoryText,
+                                            onValueChange = { newMemoryText = it },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("add_memory_input"),
+                                            placeholder = { Text("Add a fact to remember...") },
+                                            singleLine = true,
+                                            colors = violetTextFieldColors()
+                                        )
+                                        Button(
+                                            onClick = {
+                                                if (newMemoryText.isNotBlank()) {
+                                                    viewModel.addManualMemoryFact(newMemoryText)
+                                                    newMemoryText = ""
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = SuaEmerald,
+                                                contentColor = SuaObsidian
+                                            ),
+                                            modifier = Modifier.testTag("save_memory_button")
+                                        ) {
+                                            Text("KEEP", fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+
+                                    if (memoryItems.isEmpty()) {
+                                        Text(
+                                            text = "Memory Vault is empty. Add a fact above or tap the Bookmark icon on any chat item.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary
+                                        )
+                                    } else {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            memoryItems.forEach { mem ->
+                                                SettingsMemoryRow(
+                                                    item = mem,
+                                                    onDelete = { viewModel.deleteMemoryFact(mem.id) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // SECTION 6: SYSTEM PERMISSIONS MATRIX
+                    item {
+                        val grantedCount = permissionStatuses.count { it.isGranted }
+                        val totalCount = permissionStatuses.size
+                        val allGranted = grantedCount == totalCount
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        1.5.dp,
+                                        if (allGranted) SuaEmerald else SuaCyan,
+                                        RoundedCornerShape(20.dp)
+                                    )
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Security,
+                                            contentDescription = "Permissions Matrix",
+                                            tint = SuaCyan
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "06 // SYSTEM PERMISSIONS MATRIX",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = SuaTextPrimary,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                text = "ACTIVE SUBSYSTEMS: $grantedCount / $totalCount ONLINE",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (allGranted) SuaEmerald else SuaAmber
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (!viewModel.controller.areAllRuntimePermissionsGranted()) {
+                                            val runtimePerms =
+                                                viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
+                                            multiplePermissionsLauncher.launch(runtimePerms)
+                                        } else if (!viewModel.controller.canWriteSystemSettings()) {
+                                            launchWriteSettingsIntent()
+                                        } else if (!viewModel.controller.isDeviceAdminActive()) {
+                                            launchDeviceAdminIntent()
+                                        } else if (!viewModel.controller.isIgnoringBatteryOptimizations()) {
+                                            launchBatteryOptIntent()
+                                        } else {
+                                            val runtimePerms =
+                                                viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
+                                            multiplePermissionsLauncher.launch(runtimePerms)
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp)
+                                        .testTag("allow_all_permissions_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = SuaCyan,
+                                        contentColor = SuaObsidian
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Security, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "GRANT ALL SYSTEM PERMISSIONS",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    permissionStatuses.forEach { perm ->
+                                        PermissionRowItem(
+                                            item = perm,
+                                            onGrantClick = {
+                                                when (perm.id) {
+                                                    "WRITE_SETTINGS" -> launchWriteSettingsIntent()
+                                                    "DEVICE_ADMIN" -> launchDeviceAdminIntent()
+                                                    "BATTERY_OPT" -> launchBatteryOptIntent()
+                                                    else -> multiplePermissionsLauncher.launch(arrayOf(perm.id))
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // SECTION 7: SPEED DIAL / VOICE CONTACTS
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.94f)),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, violetGlassBrush, RoundedCornerShape(20.dp))
+                                    .padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "07 // VOICE SPEED-DIAL DIRECTORY",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = SuaTextPrimary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+
+                                quickContacts.forEach { contact ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(SuaDeepNavy)
+                                            .border(1.dp, SuaBorder, RoundedCornerShape(12.dp))
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = null,
+                                                tint = SuaCyan,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = contact.name,
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = SuaTextPrimary
+                                                )
+                                                Text(
+                                                    text = "${contact.aliasTag} • ${contact.phoneNumber}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = SuaCyan
+                                                )
+                                            }
+                                        }
+                                        IconButton(onClick = { viewModel.removeQuickContact(contact.name) }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Remove Contact",
+                                                tint = SuaCrimson
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = newContactName,
+                                        onValueChange = { newContactName = it },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("contact_name_input"),
+                                        label = { Text("Name (e.g. Rahul)") },
+                                        singleLine = true,
+                                        colors = violetTextFieldColors()
+                                    )
+                                    OutlinedTextField(
+                                        value = newContactTag,
+                                        onValueChange = { newContactTag = it },
+                                        modifier = Modifier.weight(1f),
+                                        label = { Text("Alias / Nickname") },
+                                        singleLine = true,
+                                        colors = violetTextFieldColors()
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = newContactPhone,
+                                        onValueChange = { newContactPhone = it },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("contact_phone_input"),
+                                        label = { Text("Phone Number") },
+                                        singleLine = true,
+                                        colors = violetTextFieldColors()
+                                    )
+
+                                    Button(
+                                        onClick = {
+                                            if (newContactName.isNotBlank() && newContactPhone.isNotBlank()) {
+                                                viewModel.addOrUpdateQuickContact(
+                                                    name = newContactName,
+                                                    aliasTag = newContactTag,
+                                                    phone = newContactPhone
+                                                )
+                                                newContactName = ""
+                                                newContactTag = ""
+                                                newContactPhone = ""
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .height(54.dp)
+                                            .testTag("add_contact_button"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SuaCyan,
+                                            contentColor = SuaObsidian
+                                        )
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Add Contact")
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("ADD", fontWeight = FontWeight.ExtraBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item { Spacer(modifier = Modifier.height(28.dp)) }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun sharpTextFieldColors() = OutlinedTextFieldDefaults.colors(
+private fun violetTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = SuaCyan,
-    unfocusedBorderColor = SuaTextPrimary,
+    unfocusedBorderColor = SuaBorder,
     focusedTextColor = SuaTextPrimary,
     unfocusedTextColor = SuaTextPrimary,
-    focusedContainerColor = SuaObsidian,
-    unfocusedContainerColor = SuaObsidian,
+    focusedContainerColor = SuaObsidian.copy(alpha = 0.78f),
+    unfocusedContainerColor = SuaObsidian.copy(alpha = 0.65f),
     focusedLabelColor = SuaCyan,
     unfocusedLabelColor = SuaTextSecondary
 )
