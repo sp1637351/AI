@@ -26,6 +26,61 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
     private var pendingOnComplete: (() -> Unit)? = null
     private var currentOnComplete: (() -> Unit)? = null
 
+    @Volatile
+    var isSpeakingNow: Boolean = false
+        private set
+
+    @Volatile
+    var lastSpeechEndTimeMs: Long = 0L
+        private set
+
+    @Volatile
+    var lastSpokenText: String = ""
+        private set
+
+    private val selfEchoPhrases = listOf(
+        "माफ़ कीजिए",
+        "maph kijie",
+        "maaf kijiye",
+        "gemini sadasy",
+        "जेमिनी एआई",
+        "जी बॉस",
+        "ji boss",
+        "नमस्ते बॉस",
+        "namaste boss",
+        "मोको ऑनलाइन",
+        "moko online",
+        "स्लीप मोड में",
+        "हार्डवेयर कमांड चालू",
+        "एपीआई की मान्य नहीं"
+    )
+
+    fun isInPostSpeechCooldown(cooldownMs: Long = 900L): Boolean {
+        if (isSpeakingNow) return true
+        val elapsed = System.currentTimeMillis() - lastSpeechEndTimeMs
+        return lastSpeechEndTimeMs > 0L && elapsed in 0..cooldownMs
+    }
+
+    /**
+     * Returns true if the recognized speech is actually Moko's own speaker output
+     * picked up by the microphone (preventing infinite self-listening loops).
+     */
+    fun isLikelySelfEcho(recognizedText: String): Boolean {
+        if (isSpeakingNow || isInPostSpeechCooldown(700L)) return true
+        val clean = recognizedText.trim().lowercase()
+        if (clean.isEmpty()) return false
+
+        for (phrase in selfEchoPhrases) {
+            if (clean.contains(phrase)) return true
+        }
+
+        val recent = lastSpokenText.trim().lowercase()
+        if (recent.length >= 8 && (recent.contains(clean) || clean.contains(recent))) {
+            return true
+        }
+        return false
+    }
+
     fun init(context: Context) {
         if (appContext == null) {
             appContext = context.applicationContext
@@ -51,16 +106,20 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
-            tts?.setSpeechRate(1.04f)
+            tts?.setSpeechRate(1.05f)
             tts?.setPitch(1.0f)
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
+                    isSpeakingNow = true
                     SuaStateRepository.updateStatus(SuaStatus.SPEAKING)
                 }
 
                 override fun onDone(utteranceId: String?) {
-                    mainHandler.post {
+                    isSpeakingNow = false
+                    lastSpeechEndTimeMs = System.currentTimeMillis()
+                    // Wait 900ms after speaker audio ends so room echo dies down before mic opens
+                    mainHandler.postDelayed({
                         releaseAudioFocus()
                         val cb = currentOnComplete
                         currentOnComplete = null
@@ -75,23 +134,24 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
                                 }
                             )
                         }
-                    }
+                    }, 900L)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    mainHandler.post {
+                    isSpeakingNow = false
+                    lastSpeechEndTimeMs = System.currentTimeMillis()
+                    mainHandler.postDelayed({
                         releaseAudioFocus()
                         val cb = currentOnComplete
                         currentOnComplete = null
                         cb?.invoke()
-                    }
+                    }, 600L)
                 }
             })
 
             isInitialized = true
 
-            // Speak any queued utterance immediately
             val queued = pendingSpeechText
             val queuedCb = pendingOnComplete
             pendingSpeechText = null
@@ -120,6 +180,7 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
             return
         }
 
+        lastSpokenText = cleanText
         val ctx = appContext
         if (!isInitialized || tts == null) {
             pendingSpeechText = cleanText
@@ -143,19 +204,24 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
                     requestAudioFocus(ctx)
                 }
 
+                isSpeakingNow = true
                 currentOnComplete = onComplete
                 SuaStateRepository.updateStatus(SuaStatus.SPEAKING)
 
                 val params = Bundle().apply {
                     putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
                 }
-                val utteranceId = "sua_voice_${System.currentTimeMillis()}"
+                val utteranceId = "moko_voice_${System.currentTimeMillis()}"
                 val res = tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
                 if (res == TextToSpeech.ERROR) {
+                    isSpeakingNow = false
+                    lastSpeechEndTimeMs = System.currentTimeMillis()
                     currentOnComplete = null
                     onComplete?.invoke()
                 }
             } catch (_: Exception) {
+                isSpeakingNow = false
+                lastSpeechEndTimeMs = System.currentTimeMillis()
                 currentOnComplete = null
                 onComplete?.invoke()
             }
@@ -164,6 +230,8 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
 
     fun stopSpeaking() {
         try {
+            isSpeakingNow = false
+            lastSpeechEndTimeMs = System.currentTimeMillis()
             currentOnComplete = null
             pendingSpeechText = null
             tts?.stop()

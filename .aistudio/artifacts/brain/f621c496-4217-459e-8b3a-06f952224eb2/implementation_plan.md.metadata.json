@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for rebranding the voice assistant to Moko, redesigning the UI with a Deep Purple & Neon Violet glass theme and slide-out side navigation drawer, adding Online vs. Sleep mode with screen-locked background execution, and integrating persistent Conversation History & AI Memory with keep/delete controls.",
-  "updatedAt": "2026-11-06T23:12:47.467962524Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Updated implementation plan addressing the HTTP 404 Gemini model deprecation error shown in the user's screenshot (upgrading to gemini-3-flash-preview and gemini-3.1-pro-preview with auto-discovery), fixing the TTS self-voice echo loop, and eliminating UI lag.",
+  "updatedAt":  "2026-11-07T09:59:11.447492247Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

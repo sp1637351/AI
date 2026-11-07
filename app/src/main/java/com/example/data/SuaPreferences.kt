@@ -22,7 +22,7 @@ class SuaPreferences(context: Context) {
         private const val KEY_USER_GEMINI_API_KEY_ENC = "user_gemini_api_key_enc_v2"
         private const val KEY_CONTINUOUS_BG = "continuous_bg_listening"
         private const val KEY_REQUIRE_WAKE_WORD = "require_wake_word_bg"
-        private const val KEY_GEMINI_MODEL = "gemini_model_id"
+        private const val KEY_GEMINI_MODEL = "gemini_model_id_v3"
         private const val KEY_VOICE_LOCALE = "voice_locale"
         private const val KEY_QUICK_CONTACTS = "quick_contacts_real_v3_json"
         private const val KEY_COMMAND_LOGS = "command_logs_v3_json"
@@ -30,9 +30,10 @@ class SuaPreferences(context: Context) {
         private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
 
         val SUPPORTED_GEMINI_MODELS = listOf(
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-2.0-flash"
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite-preview",
+            "gemini-2.5-flash"
         )
     }
 
@@ -160,12 +161,15 @@ class SuaPreferences(context: Context) {
     }
 
     fun getGeminiModel(): String {
-        return prefs.getString(KEY_GEMINI_MODEL, "gemini-2.5-flash")?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: "gemini-2.5-flash"
+        val saved = prefs.getString(KEY_GEMINI_MODEL, "gemini-3-flash-preview")?.trim().orEmpty()
+        if (saved.isEmpty() || saved == "gemini-2.5-pro" || saved == "gemini-2.0-flash") {
+            return "gemini-3-flash-preview"
+        }
+        return saved
     }
 
     fun setGeminiModel(modelId: String) {
-        val clean = modelId.trim().ifEmpty { "gemini-2.5-flash" }
+        val clean = modelId.trim().removePrefix("models/").ifEmpty { "gemini-3-flash-preview" }
         prefs.edit().putString(KEY_GEMINI_MODEL, clean).apply()
     }
 

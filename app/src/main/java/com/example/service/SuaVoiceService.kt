@@ -340,6 +340,9 @@ class SuaVoiceService : Service() {
         }
     }
 
+    private var lastRmsUpdateMs = 0L
+    private var lastPartialUpdateMs = 0L
+
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isCurrentlyListening = true
@@ -357,7 +360,12 @@ class SuaVoiceService : Service() {
         }
 
         override fun onRmsChanged(rmsdB: Float) {
-            SuaStateRepository.updateAudioRms(rmsdB)
+            // Throttle RMS updates to max 4 times/sec so UI never lags from 30-FPS recompositions
+            val now = System.currentTimeMillis()
+            if (now - lastRmsUpdateMs >= 260L) {
+                lastRmsUpdateMs = now
+                SuaStateRepository.updateAudioRms(rmsdB)
+            }
         }
 
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -376,9 +384,9 @@ class SuaVoiceService : Service() {
                     error == SpeechRecognizer.ERROR_CLIENT
                 ) {
                     initSpeechRecognizer()
-                    scheduleNextListen(1300L)
+                    scheduleNextListen(1500L)
                 } else {
-                    scheduleNextListen(950L)
+                    scheduleNextListen(1200L)
                 }
             } else {
                 SuaStateRepository.updateStatus(SuaStatus.IDLE)
@@ -393,17 +401,20 @@ class SuaVoiceService : Service() {
             if (spokenText.isNotEmpty()) {
                 processRecognizedCommand(spokenText, fromMic = true)
             } else if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                scheduleNextListen(800L)
+                scheduleNextListen(1000L)
             }
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
+            val now = System.currentTimeMillis()
+            if (now - lastPartialUpdateMs < 300L) return
+            lastPartialUpdateMs = now
             val partial = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 ?.trim()
                 .orEmpty()
-            if (partial.isNotEmpty()) {
+            if (partial.isNotEmpty() && !SuaVoiceSpeaker.isLikelySelfEcho(partial)) {
                 SuaStateRepository.updateLiveTranscript(brain.sanitizeForHud(partial))
             }
         }
@@ -414,6 +425,13 @@ class SuaVoiceService : Service() {
     private fun startListeningInternal() {
         mainHandler.post {
             if (!shouldKeepListening) return@post
+
+            // Never open the microphone while Moko's TTS speaker is still playing or cooling down!
+            if (SuaVoiceSpeaker.isSpeakingNow || SuaVoiceSpeaker.isInPostSpeechCooldown(800L)) {
+                scheduleNextListen(950L)
+                return@post
+            }
+
             val hasMic = ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.RECORD_AUDIO
@@ -436,7 +454,7 @@ class SuaVoiceService : Service() {
                     )
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, prefs.getVoiceLocale())
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2)
                     putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
                         1800L
@@ -450,7 +468,7 @@ class SuaVoiceService : Service() {
                 SuaStateRepository.updateStatus(SuaStatus.LISTENING)
             } catch (_: Exception) {
                 initSpeechRecognizer()
-                scheduleNextListen(1200L)
+                scheduleNextListen(1400L)
             }
         }
     }
@@ -479,6 +497,14 @@ class SuaVoiceService : Service() {
     private fun processRecognizedCommand(rawSpokenText: String, fromMic: Boolean) {
         stopListeningInternal()
 
+        // 1. Acoustic Self-Echo Guard: never process Moko's own TTS speaker output as a user command!
+        if (fromMic && SuaVoiceSpeaker.isLikelySelfEcho(rawSpokenText)) {
+            if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
+                scheduleNextListen(950L)
+            }
+            return
+        }
+
         val (hasWakeWord, strippedAfterWake) = HindiTransliterator.checkAndStripWakeWord(rawSpokenText)
         val wakeRequired = fromMic && prefs.isWakeWordRequiredInBackground()
         val inActiveWindow = SuaStateRepository.isWithinWakeConversationWindow()
@@ -487,7 +513,7 @@ class SuaVoiceService : Service() {
             val ignoredHud = brain.sanitizeForHud(rawSpokenText)
             SuaStateRepository.updateLiveTranscript("STANDBY // Ignored ambient: \"$ignoredHud\" (Say 'Hi Moko')")
             if (shouldKeepListening && prefs.isContinuousBackgroundEnabled()) {
-                scheduleNextListen(750L)
+                scheduleNextListen(900L)
             }
             return
         }

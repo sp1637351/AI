@@ -611,22 +611,89 @@ class SuaBrain(private val prefs: SuaPreferences) {
 
     private fun callGeminiWithFallback(userCommand: String, apiKey: String): GeminiCallOutcome {
         val preferred = prefs.getGeminiModel()
-        val candidateModels = (listOf(preferred) + SuaPreferences.SUPPORTED_GEMINI_MODELS).distinct()
+        val candidateModels = (listOf(preferred) + SuaPreferences.SUPPORTED_GEMINI_MODELS).distinct().toMutableList()
+        val triedModels = mutableSetOf<String>()
 
         var lastFailure = GeminiCallOutcome.Failure(0, "Network error")
-        for (modelId in candidateModels) {
+        var idx = 0
+        while (idx < candidateModels.size) {
+            val modelId = candidateModels[idx].removePrefix("models/")
+            idx++
+            if (!triedModels.add(modelId)) continue
+
             val outcome = callGeminiSingleModel(userCommand, apiKey, modelId)
             when (outcome) {
-                is GeminiCallOutcome.Success -> return outcome
+                is GeminiCallOutcome.Success -> {
+                    if (modelId != preferred) {
+                        prefs.setGeminiModel(modelId)
+                    }
+                    return outcome
+                }
                 is GeminiCallOutcome.Failure -> {
                     lastFailure = outcome
-                    if (outcome.httpCode != 404) {
+                    if (outcome.httpCode == 404) {
+                        // Check if Google's 404 error recommends a specific replacement model (e.g. "models/gemini-3.1-pro-preview")
+                        val suggested = Regex("use\\s+models/([a-zA-Z0-9._-]+)")
+                            .find(outcome.errorDetail)
+                            ?.groupValues
+                            ?.getOrNull(1)
+                        if (!suggested.isNullOrBlank() && !triedModels.contains(suggested)) {
+                            candidateModels.add(idx, suggested)
+                        }
+                    } else {
                         return outcome
                     }
                 }
             }
         }
+
+        // If all static models returned 404, dynamically query /v1beta/models to find an available Gemini model
+        val discoveredModel = discoverAvailableGeminiModel(apiKey, triedModels)
+        if (!discoveredModel.isNullOrBlank()) {
+            val outcome = callGeminiSingleModel(userCommand, apiKey, discoveredModel)
+            if (outcome is GeminiCallOutcome.Success) {
+                prefs.setGeminiModel(discoveredModel)
+                return outcome
+            }
+        }
+
         return lastFailure
+    }
+
+    private fun discoverAvailableGeminiModel(apiKey: String, alreadyTried: Set<String>): String? {
+        return try {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey"
+            val req = Request.Builder().url(url).get().build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val body = resp.body?.string().orEmpty()
+                val arr = JSONObject(body).optJSONArray("models") ?: return null
+                val available = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val m = arr.getJSONObject(i)
+                    val name = m.optString("name", "").removePrefix("models/")
+                    val methods = m.optJSONArray("supportedGenerationMethods")
+                    var supportsGen = false
+                    if (methods != null) {
+                        for (j in 0 until methods.length()) {
+                            if (methods.optString(j) == "generateContent") {
+                                supportsGen = true
+                                break
+                            }
+                        }
+                    }
+                    if (supportsGen && name.startsWith("gemini") && !alreadyTried.contains(name)) {
+                        available.add(name)
+                    }
+                }
+                available.firstOrNull { it.contains("gemini-3") && it.contains("flash") }
+                    ?: available.firstOrNull { it.contains("gemini-3") }
+                    ?: available.firstOrNull { it.contains("flash") }
+                    ?: available.firstOrNull()
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun callGeminiSingleModel(

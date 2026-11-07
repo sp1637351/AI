@@ -798,35 +798,6 @@ private fun MokoVioletGlassOrbCard(
     onToggleOnlineSleep: () -> Unit,
     onTestVoice: () -> Unit
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "moko_orb_transition")
-    val outerWaveRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(14000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "outer_wave_rot"
-    )
-    val innerWaveRotation by infiniteTransition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "inner_wave_rot"
-    )
-    val orbPulse by infiniteTransition.animateFloat(
-        initialValue = 0.93f,
-        targetValue = 1.10f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "orb_pulse"
-    )
-
     val activeColor = when {
         status == SuaStatus.SPEAKING -> SuaElectricBlue
         status == SuaStatus.PROCESSING -> SuaAmber
@@ -937,68 +908,61 @@ private fun MokoVioletGlassOrbCard(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // NEON VIOLET & MAGENTA GLASS ORB
+                // ZERO-LAG NEON VIOLET & MAGENTA GLASS ORB
                 Box(
-                    modifier = Modifier.size(176.dp),
+                    modifier = Modifier.size(168.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val center = Offset(size.width / 2f, size.height / 2f)
                         val maxR = size.minDimension / 2f
-                        val rmsBoost = (audioRms / 12f) * 22f
-                        val scale = if (isOnline || status != SuaStatus.IDLE) orbPulse else 0.92f
+                        val rmsBoost = (audioRms / 12f) * 16f
 
                         // Soft Neon Violet & Pink Radial Aura
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    activeColor.copy(alpha = if (isOnline) 0.36f else 0.12f),
-                                    SuaElectricBlue.copy(alpha = if (isOnline) 0.16f else 0.04f),
+                                    activeColor.copy(alpha = if (isOnline) 0.34f else 0.10f),
+                                    SuaElectricBlue.copy(alpha = if (isOnline) 0.14f else 0.04f),
                                     Color.Transparent
                                 ),
                                 center = center,
-                                radius = maxR * scale + rmsBoost
+                                radius = maxR * 0.96f + rmsBoost
                             ),
-                            radius = maxR * scale + rmsBoost,
+                            radius = maxR * 0.96f + rmsBoost,
                             center = center
                         )
 
-                        // Outer Rotating Violet Glass Arc
-                        rotate(degrees = outerWaveRotation, pivot = center) {
-                            val r1 = maxR * 0.88f
-                            val arcSize = Size(r1 * 2f, r1 * 2f)
-                            val topLeft = Offset(center.x - r1, center.y - r1)
-                            for (i in 0 until 6) {
-                                drawArc(
-                                    brush = Brush.sweepGradient(
-                                        listOf(SuaCyan, SuaElectricBlue, SuaCyan)
-                                    ),
-                                    startAngle = i * 60f,
-                                    sweepAngle = 38f,
-                                    useCenter = false,
-                                    topLeft = topLeft,
-                                    size = arcSize,
-                                    style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
+                        // Outer Segmented Violet Glass Ring
+                        val r1 = maxR * 0.86f
+                        val arcSize1 = Size(r1 * 2f, r1 * 2f)
+                        val topLeft1 = Offset(center.x - r1, center.y - r1)
+                        for (i in 0 until 6) {
+                            drawArc(
+                                color = if (isOnline) SuaCyan else SuaBorder,
+                                startAngle = i * 60f,
+                                sweepAngle = 40f,
+                                useCenter = false,
+                                topLeft = topLeft1,
+                                size = arcSize1,
+                                style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
+                            )
                         }
 
-                        // Inner Counter-Rotating Magenta Pulse Ring
-                        rotate(degrees = innerWaveRotation, pivot = center) {
-                            val r2 = maxR * 0.72f
-                            val arcSize = Size(r2 * 2f, r2 * 2f)
-                            val topLeft = Offset(center.x - r2, center.y - r2)
-                            for (i in 0 until 4) {
-                                drawArc(
-                                    color = activeColor.copy(alpha = 0.75f),
-                                    startAngle = i * 90f,
-                                    sweepAngle = 52f,
-                                    useCenter = false,
-                                    topLeft = topLeft,
-                                    size = arcSize,
-                                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
+                        // Inner Magenta Accent Ring
+                        val r2 = maxR * 0.72f
+                        val arcSize2 = Size(r2 * 2f, r2 * 2f)
+                        val topLeft2 = Offset(center.x - r2, center.y - r2)
+                        for (i in 0 until 4) {
+                            drawArc(
+                                color = activeColor.copy(alpha = 0.75f),
+                                startAngle = i * 90f + 22f,
+                                sweepAngle = 50f,
+                                useCenter = false,
+                                topLeft = topLeft2,
+                                size = arcSize2,
+                                style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
+                            )
                         }
                     }
 
