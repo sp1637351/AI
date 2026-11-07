@@ -701,6 +701,8 @@ class SuaBrain(
             lower.contains("kisne develop") ||
             lower.contains("kaun develop") ||
             lower.contains("kon develop") ||
+            lower.contains("tumhe kaun") ||
+            lower.contains("tumhen kaun") ||
             lower.contains("who developed") ||
             lower.contains("who created") ||
             lower.contains("who made you") ||
@@ -714,9 +716,11 @@ class SuaBrain(
             text.contains("किसने बनाया") ||
             text.contains("किसने डेवलप") ||
             text.contains("कौन डेवलप") ||
+            text.contains("डेवलप किया") ||
             text.contains("डेवलप कौन") ||
             text.contains("बनाने वाला कौन") ||
             text.contains("डेवलपर कौन") ||
+            text.contains("डेवलपर का नाम") ||
             text.contains("मालिक कौन")
 
         if (isDeveloperQuery) {
@@ -724,9 +728,9 @@ class SuaBrain(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "DEVELOPER // I was proudly developed & engineered by ${SuaPreferences.DEVELOPER_NAME}.",
                 spokenReply = if (speakEn) {
-                    "I was proudly developed and engineered by Mister Shashank (${SuaPreferences.DEVELOPER_NAME})!"
+                    "I was proudly developed and engineered by ${SuaPreferences.DEVELOPER_NAME}!"
                 } else {
-                    "मुझे मिस्टर शशांक (MR. SHASHANK) ने बहुत प्यार और स्मार्ट टेक्नोलॉजी से डेवलप किया है! मेरे डेवलपर मिस्टर शशांक हैं।"
+                    "मुझे ${SuaPreferences.DEVELOPER_NAME} (मिस्टर शशांक) ने डेवलप किया है! मेरे डेवलपर ${SuaPreferences.DEVELOPER_NAME} हैं।"
                 }
             )
         }
@@ -917,7 +921,72 @@ class SuaBrain(
         val numberRegex = Regex("(\\d{1,3})")
         val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
-        // 0. VOICE MODE SWITCH ("स्लीप मोड में जाओ", "ऑनलाइन हो जाओ", "ऑफलाइन हो जाओ", "Switch to sleep mode", "Go offline")
+        // 0A. SCREEN SHARE & SCREEN ANALYSIS ("स्क्रीन शेयर करो", "स्क्रीन देखो", "स्क्रीन एनालाइज करो", "Share screen", "Analyze screen")
+        val hasScreenShareIntent = lower.contains("screen share") || lower.contains("share screen") ||
+            lower.contains("analyze screen") || lower.contains("analyse screen") ||
+            lower.contains("read screen") || lower.contains("what is on screen") ||
+            lower.contains("what is on my screen") || lower.contains("screen dekho") ||
+            lower.contains("screen par kya hai") ||
+            text.contains("स्क्रीन शेयर") || text.contains("स्क्रीन देखो") ||
+            text.contains("स्क्रीन एनालाइज") || text.contains("स्क्रीन पर क्या है") ||
+            text.contains("स्क्रीन पढ़ो")
+        if (hasScreenShareIntent) {
+            val isStopShare = Regex("\\b(off|band|stop|close|disable)\\b").containsMatchIn(lower) ||
+                text.contains("बंद") || text.contains("रोको") || text.contains("ऑफ")
+            val battery = controller?.getBatteryPercentage() ?: 88
+            return if (isStopShare) {
+                ParsedCommand(
+                    action = DeviceActionType.SCREEN_SHARE_ANALYZE,
+                    target = "OFF",
+                    displayReply = "SCREEN SHARE OFF // Live screen analysis stopped.",
+                    spokenReply = if (speakEn) "Stopped screen sharing, $userName." else "जी $userName, स्क्रीन शेयर बंद कर दिया गया है।"
+                )
+            } else {
+                ParsedCommand(
+                    action = DeviceActionType.SCREEN_SHARE_ANALYZE,
+                    target = "ON",
+                    displayReply = SuaStateRepository.buildCurrentScreenSnapshotSummary(prefs, battery),
+                    spokenReply = if (speakEn) {
+                        SuaStateRepository.buildCurrentScreenSpokenSummaryEn(prefs, battery)
+                    } else {
+                        SuaStateRepository.buildCurrentScreenSpokenSummaryHi(prefs, battery)
+                    }
+                )
+            }
+        }
+
+        // 0B. VOICE CLICK ("इसे क्लिक करो", "सेटिंग पर क्लिक करो", "हिस्ट्री पर क्लिक करो", "Click Settings", "Tap Unlock")
+        val hasClickVerb = Regex("\\b(click|tap|press)\\b").containsMatchIn(lower) ||
+            lower.contains("click karo") || lower.contains("tap karo") ||
+            text.contains("क्लिक करो") || text.contains("क्लिक") || text.contains("दबाओ") || text.contains("टैप करो")
+        if (hasClickVerb) {
+            val cleanedTarget = text
+                .replace(Regex("(?i)\\b(please|jara|moko|click|tap|press|on|button|par|pe|ko|karo|kar|do|इसे|इस पर|पर|को|बटन|क्लिक|दबाओ|टैप|करो|कर दो)\\b"), " ")
+                .trim()
+                .ifEmpty { "Settings" }
+            return ParsedCommand(
+                action = DeviceActionType.VOICE_CLICK,
+                target = cleanedTarget,
+                displayReply = "$assistantName VOICE CLICK // Clicking '$cleanedTarget' on screen.",
+                spokenReply = if (speakEn) "Clicking $cleanedTarget on your screen, $userName." else "जी $userName, '$cleanedTarget' पर क्लिक किया जा रहा है।"
+            )
+        }
+
+        // 0C. VOICE UNLOCK ("लॉक खोलो", "स्क्रीन अनलॉक करो", "लॉक हटाओ", "Unlock screen", "Unlock phone", "Open lock")
+        val isUnlockCommand = lower.contains("unlock") || lower.contains("lock kholo") ||
+            lower.contains("lock khol") || lower.contains("lock hatao") || lower.contains("open lock") ||
+            lower.contains("screen kholo") ||
+            text.contains("लॉक खोलो") || text.contains("लॉक खोल") ||
+            text.contains("अनलॉक") || text.contains("लॉक हटाओ") || text.contains("स्क्रीन खोलो")
+        if (isUnlockCommand) {
+            return ParsedCommand(
+                action = DeviceActionType.UNLOCK_PHONE,
+                displayReply = "$assistantName SECURITY // Unlocking screen & dismissing lock overlay.",
+                spokenReply = if (speakEn) "Unlocking your screen now, $userName." else "जी $userName, मैंने लॉक खोल दिया है और स्क्रीन अनलॉक कर दी है।"
+            )
+        }
+
+        // 0D. VOICE MODE SWITCH ("स्लीप मोड में जाओ", "ऑनलाइन हो जाओ", "ऑफलाइन हो जाओ", "Switch to sleep mode", "Go offline")
         val asksSleepMode = lower.contains("sleep mode") || text.contains("स्लीप मोड")
         val asksOfflineMode = lower.contains("offline mode") || lower.contains("go offline") ||
             text.contains("ऑफलाइन मोड") || text.contains("ऑफलाइन हो जाओ")
@@ -985,6 +1054,102 @@ class SuaBrain(
             }
         }
 
+        // 2B. OFFLINE SYSTEM SETTINGS (Hotspot, Location/GPS, Airplane Mode, Sound/Vibrate/Silent Mode, DND, Display, Battery Saver, Security, Storage)
+        if (lower.contains("hotspot") || lower.contains("tethering") || text.contains("हॉटस्पॉट")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "HOTSPOT",
+                displayReply = "$assistantName HOTSPOT // Opening Hotspot & Tethering Settings.",
+                spokenReply = if (speakEn) "Opening Hotspot settings, $userName." else "जी $userName, हॉटस्पॉट सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("location") || lower.contains("gps") || text.contains("लोकेशन") || text.contains("जीपीएस")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "LOCATION",
+                displayReply = "$assistantName LOCATION // Opening Location & GPS Settings.",
+                spokenReply = if (speakEn) "Opening Location and GPS settings, $userName." else "जी $userName, लोकेशन और जीपीएस सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("airplane") || lower.contains("flight mode") || lower.contains("aeroplane") ||
+            text.contains("एयरप्लेन") || text.contains("फ्लाइट मोड")
+        ) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "AIRPLANE",
+                displayReply = "$assistantName AIRPLANE MODE // Opening Airplane Mode Settings.",
+                spokenReply = if (speakEn) "Opening Airplane Mode settings, $userName." else "जी $userName, एयरप्लेन मोड सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("vibrate mode") || lower.contains("vibration mode") || lower.contains("phone vibrate") ||
+            text.contains("वाइब्रेट मोड") || text.contains("वाइब्रेट करो") || text.contains("फोन वाइब्रेट")
+        ) {
+            return ParsedCommand(
+                action = DeviceActionType.RINGER_MODE_SET,
+                target = "VIBRATE",
+                displayReply = "$assistantName RINGER // Switching phone to VIBRATE mode.",
+                spokenReply = if (speakEn) "Switched phone to Vibrate mode, $userName." else "जी $userName, फोन वाइब्रेट मोड में कर दिया गया है।"
+            )
+        }
+        if (lower.contains("silent mode") || lower.contains("phone silent") || lower.contains("silent karo") ||
+            lower.contains("do not disturb") || lower.contains("dnd") ||
+            text.contains("साइलेंट मोड") || text.contains("फोन साइलेंट") || text.contains("साइलेंट करो") ||
+            text.contains("डू नॉट डिस्टर्ब")
+        ) {
+            val isOff = Regex("\\b(off|band|disable|hato|hatao)\\b").containsMatchIn(lower) ||
+                text.contains("बंद") || text.contains("हटा")
+            return ParsedCommand(
+                action = DeviceActionType.RINGER_MODE_SET,
+                target = if (isOff) "NORMAL" else "SILENT",
+                displayReply = if (isOff) "$assistantName RINGER // Restored NORMAL RING mode." else "$assistantName RINGER // Switched phone to SILENT mode.",
+                spokenReply = if (isOff) {
+                    if (speakEn) "Restored normal ring mode, $userName." else "जी $userName, साइलेंट मोड हटाकर नॉर्मल रिंग मोड चालू कर दिया गया है।"
+                } else {
+                    if (speakEn) "Switched phone to Silent mode, $userName." else "जी $userName, फोन साइलेंट मोड पर कर दिया गया है।"
+                }
+            )
+        }
+        if (lower.contains("ring mode") || lower.contains("normal mode") || text.contains("रिंग मोड") || text.contains("नॉर्मल मोड")) {
+            return ParsedCommand(
+                action = DeviceActionType.RINGER_MODE_SET,
+                target = "NORMAL",
+                displayReply = "$assistantName RINGER // Restored NORMAL RING mode.",
+                spokenReply = if (speakEn) "Restored normal ring mode, $userName." else "जी $userName, फोन नॉर्मल रिंग मोड पर चालू कर दिया गया है।"
+            )
+        }
+        if (lower.contains("battery saver") || lower.contains("power saver") || text.contains("बैटरी सेवर")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "BATTERY",
+                displayReply = "$assistantName POWER // Opening Battery Saver Settings.",
+                spokenReply = if (speakEn) "Opening Battery Saver settings, $userName." else "जी $userName, बैटरी सेवर सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("display setting") || lower.contains("auto rotate") || text.contains("डिस्प्ले सेटिंग") || text.contains("ऑटो रोटेट")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "DISPLAY",
+                displayReply = "$assistantName DISPLAY // Opening Display Settings.",
+                spokenReply = if (speakEn) "Opening Display settings, $userName." else "जी $userName, डिस्प्ले सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("security setting") || lower.contains("password setting") || text.contains("सिक्योरिटी सेटिंग") || text.contains("पासवर्ड सेटिंग")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "SECURITY",
+                displayReply = "$assistantName SECURITY // Opening Security & Password Settings.",
+                spokenReply = if (speakEn) "Opening Security settings, $userName." else "जी $userName, सिक्योरिटी और पासवर्ड सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+        if (lower.contains("storage setting") || text.contains("स्टोरेज सेटिंग")) {
+            return ParsedCommand(
+                action = DeviceActionType.OPEN_SYSTEM_SETTING,
+                target = "STORAGE",
+                displayReply = "$assistantName STORAGE // Opening Storage Settings.",
+                spokenReply = if (speakEn) "Opening Storage settings, $userName." else "जी $userName, स्टोरेज सेटिंग्स खोली जा रही हैं।"
+            )
+        }
+
         // 3. FLASHLIGHT OFF / ON
         val hasExplicitTorch = lower.contains("flashlight") || lower.contains("flash light") ||
             lower.contains("torch") || text.contains("फ्लैशलाइट") || text.contains("टॉर्च")
@@ -1011,12 +1176,12 @@ class SuaBrain(
             }
         }
 
-        // 2. LOCK PHONE
+        // 4. LOCK PHONE
         val hasLockWord = Regex("\\block\\b").containsMatchIn(lower) || text.contains("लॉक")
         val hasPhoneScreenTarget = lower.contains("phone") || lower.contains("screen") ||
             lower.contains("mobile") || text.contains("फोन") || text.contains("स्क्रीन") ||
             text.contains("मोबाइल") || lower.trim() == "lock" || text.contains("लॉक करो")
-        if (hasLockWord && hasPhoneScreenTarget) {
+        if (hasLockWord && hasPhoneScreenTarget && !isUnlockCommand) {
             return ParsedCommand(
                 action = DeviceActionType.LOCK_PHONE,
                 displayReply = "$assistantName SECURITY // Locking phone screen now.",
@@ -1446,6 +1611,13 @@ class SuaBrain(
             "The user spoke in Hindi/Hinglish, so `spokenReply` MUST be in sweet, natural Hindi (Devanagari)."
         }
 
+        val screenContextBlock = if (SuaStateRepository.isScreenShareActive.value) {
+            val bat = controller?.getBatteryPercentage() ?: 88
+            "\n[LIVE SHARED SCREEN SNAPSHOT]:\n${SuaStateRepository.buildCurrentScreenSnapshotSummary(prefs, bat)}\n"
+        } else {
+            ""
+        }
+
         return """
             You are $assistantName, a loving, sweet, ultra-smart personal AI voice assistant for Android.
             CRITICAL IDENTITY & DEVELOPER FACTS:
@@ -1461,11 +1633,11 @@ class SuaBrain(
             
             [RECENT CONVERSATION HISTORY]:
             $recentConversation
-            
+            $screenContextBlock
             6. Return ONLY a valid JSON object matching this exact schema:
             {
-              "action": "CALL" | "SMS" | "WHATSAPP_MSG" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "LOCK_PHONE" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
-              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS/WHATSAPP_MSG, or App name (e.g. 'WhatsApp', 'YouTube') if OPEN_APP, otherwise empty string",
+              "action": "CALL" | "SMS" | "WHATSAPP_MSG" | "FLASHLIGHT_ON" | "FLASHLIGHT_OFF" | "BLUETOOTH_ON" | "BLUETOOTH_OFF" | "INTERNET_ON" | "INTERNET_OFF" | "LOCK_PHONE" | "UNLOCK_PHONE" | "SCREEN_SHARE_ANALYZE" | "VOICE_CLICK" | "OPEN_SYSTEM_SETTING" | "RINGER_MODE_SET" | "BRIGHTNESS_UP" | "BRIGHTNESS_DOWN" | "BRIGHTNESS_SET" | "VOLUME_UP" | "VOLUME_DOWN" | "VOLUME_SET" | "VOLUME_MUTE" | "MEDIA_PLAY" | "MEDIA_PAUSE" | "MEDIA_NEXT" | "MEDIA_PREV" | "BATTERY_STATUS" | "SET_ALARM" | "OPEN_SETTINGS" | "OPEN_APP" | "TIME_DATE" | "MEMORY_SAVE" | "AI_CHAT",
+              "target": "contact name in English Roman script (e.g. 'Rahul') if CALL/SMS/WHATSAPP_MSG, or App/Button/Setting name if OPEN_APP/VOICE_CLICK/OPEN_SYSTEM_SETTING, otherwise empty string",
               "message": "Message text content if action is SMS or WHATSAPP_MSG, otherwise empty string",
               "numericValue": integer (0-100 for brightness/volume, 0-23 for alarm 24h hour, or -1 if not applicable),
               "secondaryNumericValue": integer (0-59 for alarm minutes, default 0),

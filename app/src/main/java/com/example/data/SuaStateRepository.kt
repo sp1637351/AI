@@ -25,6 +25,12 @@ object SuaStateRepository {
     private val _isAppInForeground = MutableStateFlow(true)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
 
+    private val _isScreenShareActive = MutableStateFlow(false)
+    val isScreenShareActive: StateFlow<Boolean> = _isScreenShareActive.asStateFlow()
+
+    private val _pendingUiNavigationAction = MutableStateFlow<String?>(null)
+    val pendingUiNavigationAction: StateFlow<String?> = _pendingUiNavigationAction.asStateFlow()
+
     private val _liveTranscript = MutableStateFlow("Say 'Hi Moko' or type a message below...")
     val liveTranscript: StateFlow<String> = _liveTranscript.asStateFlow()
 
@@ -68,6 +74,60 @@ object SuaStateRepository {
 
     @Volatile
     var lastWakeSessionTimestampMs: Long = 0L
+
+    fun setScreenShareActive(active: Boolean) {
+        _isScreenShareActive.value = active
+    }
+
+    fun triggerUiNavigationAction(actionKey: String?) {
+        _pendingUiNavigationAction.value = actionKey
+    }
+
+    fun buildCurrentScreenSnapshotSummary(prefs: SuaPreferences, batteryPct: Int): String {
+        val bot = prefs.getAssistantName()
+        val user = prefs.getUserName()
+        val dev = SuaPreferences.DEVELOPER_NAME
+        val mode = _operatingMode.value.label
+        val timerSec = _wakeSessionRemainingSeconds.value
+        val lockState = if (_isScreenLockedOverlay.value) "LOCKED OVERLAY ACTIVE" else "UNLOCKED"
+        val torchState = if (_isFlashlightOn.value) "ON" else "OFF"
+        val bright = _brightnessPercent.value
+        val vol = _volumePercent.value
+        val pending = _pendingComms.value
+        val pendingSummary = if (pending != null) {
+            "Pending Confirmation Card: ${pending.actionType.label} for ${pending.contactName} (${pending.phoneNumbers.joinToString()})"
+        } else {
+            "No pending Call/SMS confirmation card"
+        }
+        return "SCREEN SHARE VISION // Assistant: $bot (Dev: $dev, User: $user) | Mode: $mode (${timerSec}s active timer) | Screen: $lockState | Battery: $batteryPct% | Torch: $torchState | Brightness: $bright% | Volume: $vol% | $pendingSummary | Center Reply: \"${_lastSuaReply.value.take(100)}\" | User Spoke: \"${_liveTranscript.value.take(80)}\" | Clickable Controls: [ONLINE, SLEEP, OFFLINE, SETTINGS, HISTORY, MENU, VOICE, SCREEN SHARE, SEND, UNLOCK]"
+    }
+
+    fun buildCurrentScreenSpokenSummaryHi(prefs: SuaPreferences, batteryPct: Int): String {
+        val bot = prefs.getAssistantName()
+        val user = prefs.getUserName()
+        val mode = _operatingMode.value.label
+        val timerSec = _wakeSessionRemainingSeconds.value
+        val pending = _pendingComms.value
+        val lockPart = if (_isScreenLockedOverlay.value) "स्क्रीन अभी लॉक है, आप 'लॉक खोलो' बोलकर अनलॉक कर सकते हैं। " else ""
+        val pendingPart = if (pending != null) {
+            "स्क्रीन पर अभी ${pending.contactName} के लिए ${pending.actionType.label} का कन्फर्मेशन कार्ड खुला है। "
+        } else ""
+        val torchPart = if (_isFlashlightOn.value) "फ्लैशलाइट चालू है, " else ""
+        return "जी $user, मैंने आपकी स्क्रीन को अच्छे से देख और एनालाइज कर लिया है। ${lockPart}${pendingPart}अभी $bot $mode मोड में है (${timerSec} सेकंड टाइमर), बैटरी $batteryPct प्रतिशत है, ${torchPart}ब्राइटनेस ${_brightnessPercent.value} प्रतिशत और वॉल्यूम ${_volumePercent.value} प्रतिशत है। आप किसी भी बटन का नाम बोलकर जैसे 'सेटिंग पर क्लिक करो', 'हिस्ट्री पर क्लिक करो', या 'लॉक खोलो' बोलकर काम करवा सकते हैं।"
+    }
+
+    fun buildCurrentScreenSpokenSummaryEn(prefs: SuaPreferences, batteryPct: Int): String {
+        val bot = prefs.getAssistantName()
+        val user = prefs.getUserName()
+        val mode = _operatingMode.value.label
+        val timerSec = _wakeSessionRemainingSeconds.value
+        val pending = _pendingComms.value
+        val lockPart = if (_isScreenLockedOverlay.value) "The screen lock overlay is currently active; say 'Unlock screen' to open it. " else ""
+        val pendingPart = if (pending != null) {
+            "A confirmation card for ${pending.contactName} (${pending.actionType.label}) is visible on screen. "
+        } else ""
+        return "Yes $user, I am viewing and analyzing your screen now. ${lockPart}${pendingPart}$bot is in $mode mode with ${timerSec} seconds on the timer, battery is at $batteryPct percent, brightness is ${_brightnessPercent.value} percent, and volume is ${_volumePercent.value} percent. You can say 'Click Settings', 'Click History', or 'Unlock screen' anytime."
+    }
 
     fun setOperatingMode(mode: MokoOperatingMode) {
         _operatingMode.value = mode

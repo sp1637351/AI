@@ -35,6 +35,8 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     val operatingMode: StateFlow<MokoOperatingMode> = SuaStateRepository.operatingMode
     val wakeSessionRemainingSeconds: StateFlow<Int> = SuaStateRepository.wakeSessionRemainingSeconds
     val isBackgroundServiceRunning: StateFlow<Boolean> = SuaStateRepository.isBackgroundServiceRunning
+    val isScreenShareActive: StateFlow<Boolean> = SuaStateRepository.isScreenShareActive
+    val pendingUiNavigationAction: StateFlow<String?> = SuaStateRepository.pendingUiNavigationAction
     val liveTranscript: StateFlow<String> = SuaStateRepository.liveTranscript
     val lastSuaReply: StateFlow<String> = SuaStateRepository.lastSuaReply
     val isFlashlightOn: StateFlow<Boolean> = SuaStateRepository.isFlashlightOn
@@ -136,6 +138,33 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _voicePitch.value = prefs.getVoicePitch()
         _voiceSpeed.value = prefs.getVoiceSpeed()
         _customCommands.value = prefs.getCustomCommands()
+    }
+
+    fun consumeUiNavigationAction() {
+        SuaStateRepository.triggerUiNavigationAction(null)
+    }
+
+    fun toggleScreenShareAndAnalyze() {
+        val nextState = !isScreenShareActive.value
+        if (nextState) {
+            SuaStateRepository.markWakeWordDetected()
+            SuaStateRepository.updateLiveTranscript("Analyze Screen (Screen Share ON)")
+            val res = controller.analyzeSharedScreen("ON")
+            SuaStateRepository.updateLastReply(res.displayReply)
+            SuaStateRepository.addCommandLog(
+                userCommand = "Screen Share & Analyze",
+                suaResponse = res.displayReply,
+                actionType = DeviceActionType.SCREEN_SHARE_ANALYZE,
+                actionSuccess = true,
+                prefs = prefs
+            )
+            SuaVoiceSpeaker.speak(res.finalSpokenReply)
+        } else {
+            val res = controller.analyzeSharedScreen("OFF")
+            SuaStateRepository.updateLiveTranscript("Stop Screen Share")
+            SuaStateRepository.updateLastReply(res.displayReply)
+            SuaVoiceSpeaker.speak(res.finalSpokenReply)
+        }
     }
 
     fun toggleBackgroundVoiceService() {

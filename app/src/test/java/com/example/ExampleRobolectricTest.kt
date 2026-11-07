@@ -74,5 +74,31 @@ class ExampleRobolectricTest {
         SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
         assertEquals(MokoOperatingMode.OFFLINE, SuaStateRepository.operatingMode.value)
         assertEquals(0, SuaStateRepository.wakeSessionRemainingSeconds.value)
+
+        // Verify Screen Unlock, Screen Share Analyze, Voice Click, and Offline System Settings
+        val unlockCmd = brain.parseHardwareIntentLocally("लॉक खोलो")
+        assertNotNull(unlockCmd)
+        assertEquals(DeviceActionType.UNLOCK_PHONE, unlockCmd?.action)
+
+        val screenShareCmd = brain.parseHardwareIntentLocally("स्क्रीन पर क्या है")
+        assertNotNull(screenShareCmd)
+        assertEquals(DeviceActionType.SCREEN_SHARE_ANALYZE, screenShareCmd?.action)
+
+        val voiceClickCmd = brain.parseHardwareIntentLocally("सेटिंग पर क्लिक करो")
+        assertNotNull(voiceClickCmd)
+        assertEquals(DeviceActionType.VOICE_CLICK, voiceClickCmd?.action)
+
+        val hotspotCmd = brain.parseHardwareIntentLocally("हॉटस्पॉट चालू करो")
+        assertNotNull(hotspotCmd)
+        assertEquals(DeviceActionType.OPEN_SYSTEM_SETTING, hotspotCmd?.action)
+        assertEquals("HOTSPOT", hotspotCmd?.target)
+
+        val silentCmd = brain.parseHardwareIntentLocally("फोन साइलेंट करो")
+        assertNotNull(silentCmd)
+        assertEquals(DeviceActionType.RINGER_MODE_SET, silentCmd?.action)
+        assertEquals("SILENT", silentCmd?.target)
+
+        SuaStateRepository.setScreenShareActive(true)
+        assertTrue(SuaStateRepository.isScreenShareActive.value)
     }
 }

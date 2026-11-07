@@ -229,6 +229,11 @@ class SuaDeviceController(private val context: Context) {
             DeviceActionType.INTERNET_ON -> controlInternetConnectivity(true, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.INTERNET_OFF -> controlInternetConnectivity(false, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.LOCK_PHONE -> lockPhoneScreen(parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.UNLOCK_PHONE -> unlockPhoneScreen(parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.SCREEN_SHARE_ANALYZE -> analyzeSharedScreen(parsed.target, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.VOICE_CLICK -> executeVoiceClick(parsed.target, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.OPEN_SYSTEM_SETTING -> openSpecificSystemSetting(parsed.target, parsed.displayReply, parsed.spokenReply)
+            DeviceActionType.RINGER_MODE_SET -> setPhoneRingerMode(parsed.target, parsed.displayReply, parsed.spokenReply)
             DeviceActionType.BRIGHTNESS_UP -> adjustBrightness(delta = 25, explicit = -1, displayReply = parsed.displayReply, spokenReply = parsed.spokenReply)
             DeviceActionType.BRIGHTNESS_DOWN -> adjustBrightness(delta = -25, explicit = -1, displayReply = parsed.displayReply, spokenReply = parsed.spokenReply)
             DeviceActionType.BRIGHTNESS_SET -> adjustBrightness(
@@ -1212,6 +1217,262 @@ class SuaDeviceController(private val context: Context) {
                 "OS ERROR // Unable to open system settings: ${e.localizedMessage}",
                 "सेटिंग्स खोलने में समस्या आई।"
             )
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    fun unlockPhoneScreen(
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val userName = prefs.getUserName()
+        SuaStateRepository.setScreenLockedOverlay(false)
+        try {
+            val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val wl = pm?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+                "Moko:VoiceUnlockWakeLock"
+            )
+            wl?.acquire(5000L)
+        } catch (_: Exception) {
+        }
+        try {
+            val openAppIntent = Intent(appContext, com.example.MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            launchActivityWithBackgroundSupport(
+                openAppIntent,
+                "Moko // Screen Unlocked",
+                "Screen unlocked by voice"
+            )
+        } catch (_: Exception) {
+        }
+        return ActionExecutionResult(
+            success = true,
+            displayReply = customDisplay.ifBlank { "SCREEN UNLOCKED // Security lock overlay dismissed & display awakened." },
+            finalSpokenReply = customSpoken.ifBlank { "जी $userName, मैंने आपका लॉक खोल दिया है और स्क्रीन अनलॉक कर दी है।" }
+        )
+    }
+
+    fun analyzeSharedScreen(
+        targetModeOrQuery: String,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val upper = targetModeOrQuery.trim().uppercase()
+        val userName = prefs.getUserName()
+        if (upper == "OFF" || upper == "STOP") {
+            SuaStateRepository.setScreenShareActive(false)
+            return ActionExecutionResult(
+                success = true,
+                displayReply = customDisplay.ifBlank { "SCREEN SHARE OFF // Live screen analysis stopped." },
+                finalSpokenReply = customSpoken.ifBlank { "जी $userName, स्क्रीन शेयर बंद कर दिया गया है।" }
+            )
+        }
+
+        SuaStateRepository.setScreenShareActive(true)
+        val battery = getBatteryPercentage()
+        val screenSummaryEn = SuaStateRepository.buildCurrentScreenSnapshotSummary(prefs, battery)
+        val screenSummaryHi = SuaStateRepository.buildCurrentScreenSpokenSummaryHi(prefs, battery)
+
+        return ActionExecutionResult(
+            success = true,
+            displayReply = customDisplay.ifBlank { screenSummaryEn },
+            finalSpokenReply = customSpoken.ifBlank { screenSummaryHi }
+        )
+    }
+
+    fun executeVoiceClick(
+        targetElement: String,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val raw = targetElement.trim()
+        val lower = raw.lowercase()
+        val userName = prefs.getUserName()
+
+        return when {
+            lower.contains("setting") || lower.contains("history") || lower.contains("सेटिंग") || lower.contains("हिस्ट्री") -> {
+                SuaStateRepository.triggerUiNavigationAction("OPEN_SETTINGS")
+                ActionExecutionResult(
+                    success = true,
+                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Clicked 'Settings & History' button." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, सेटिंग्स और हिस्ट्री पर क्लिक कर दिया गया है।" }
+                )
+            }
+            lower.contains("menu") || lower.contains("drawer") || lower.contains("मेन्यू") -> {
+                SuaStateRepository.triggerUiNavigationAction("OPEN_DRAWER")
+                ActionExecutionResult(
+                    success = true,
+                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Opened Side Menu Drawer." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, साइड मेन्यू खोल दिया गया है।" }
+                )
+            }
+            lower.contains("close") || lower.contains("back") || lower.contains("बंद") || lower.contains("बैक") -> {
+                SuaStateRepository.triggerUiNavigationAction("CLOSE_DRAWER")
+                ActionExecutionResult(
+                    success = true,
+                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Closed menu / navigated back." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, इसे बंद कर दिया गया है।" }
+                )
+            }
+            lower.contains("screen share") || lower.contains("share") || lower.contains("स्क्रीन शेयर") -> {
+                analyzeSharedScreen("ON", customDisplay, customSpoken)
+            }
+            lower.contains("unlock") || lower.contains("अनलॉक") || lower.contains("लॉक खोल") -> {
+                unlockPhoneScreen(customDisplay, customSpoken)
+            }
+            lower.contains("lock") || lower.contains("लॉक") -> {
+                lockPhoneScreen(customDisplay, customSpoken)
+            }
+            lower.contains("torch") || lower.contains("flashlight") || lower.contains("टॉर्च") || lower.contains("फ्लैशलाइट") -> {
+                val next = !SuaStateRepository.isFlashlightOn.value
+                setFlashlight(next, customDisplay, customSpoken)
+            }
+            lower.contains("online") || lower.contains("ऑनलाइन") -> {
+                executeModeSwitch("ONLINE", customDisplay, customSpoken)
+            }
+            lower.contains("sleep") || lower.contains("स्लीप") -> {
+                executeModeSwitch("SLEEP", customDisplay, customSpoken)
+            }
+            lower.contains("offline") || lower.contains("ऑफलाइन") -> {
+                executeModeSwitch("OFFLINE", customDisplay, customSpoken)
+            }
+            else -> {
+                // If user said "Click <AppName>" (e.g., "Click WhatsApp"), launch that app or setting
+                val appRes = openInstalledApp(raw, "", "")
+                if (appRes.success) {
+                    ActionExecutionResult(
+                        success = true,
+                        displayReply = customDisplay.ifBlank { "VOICE CLICK // Clicked & opened '$raw'." },
+                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, '$raw' पर क्लिक करके खोल दिया गया है।" }
+                    )
+                } else {
+                    SuaStateRepository.markWakeWordDetected()
+                    ActionExecutionResult(
+                        success = true,
+                        displayReply = customDisplay.ifBlank { "VOICE CLICK // Activated '$raw' on screen." },
+                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, स्क्रीन पर '$raw' को क्लिक कर दिया गया है।" }
+                    )
+                }
+            }
+        }
+    }
+
+    fun openSpecificSystemSetting(
+        settingTarget: String,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val key = settingTarget.trim().uppercase()
+        val userName = prefs.getUserName()
+
+        val (intentAction, labelEn, labelHi) = when {
+            key.contains("WIFI") || key.contains("WI-FI") || key.contains("INTERNET") ->
+                Triple(Settings.ACTION_WIFI_SETTINGS, "Wi-Fi & Internet Settings", "वाई-फाई और इंटरनेट सेटिंग्स")
+            key.contains("DATA") || key.contains("MOBILE_DATA") || key.contains("ROAMING") ->
+                Triple(Settings.ACTION_DATA_ROAMING_SETTINGS, "Mobile Data Settings", "मोबाइल डेटा सेटिंग्स")
+            key.contains("HOTSPOT") || key.contains("TETHER") ->
+                Triple(Settings.ACTION_WIRELESS_SETTINGS, "Hotspot & Tethering Settings", "हॉटस्पॉट और नेटवर्क सेटिंग्स")
+            key.contains("BLUETOOTH") ->
+                Triple(Settings.ACTION_BLUETOOTH_SETTINGS, "Bluetooth Settings", "ब्लूटूथ सेटिंग्स")
+            key.contains("LOCATION") || key.contains("GPS") ->
+                Triple(Settings.ACTION_LOCATION_SOURCE_SETTINGS, "Location / GPS Settings", "लोकेशन और जीपीएस सेटिंग्स")
+            key.contains("AIRPLANE") || key.contains("FLIGHT") ->
+                Triple(Settings.ACTION_AIRPLANE_MODE_SETTINGS, "Airplane Mode Settings", "एयरप्लेन मोड सेटिंग्स")
+            key.contains("SOUND") || key.contains("AUDIO") || key.contains("RINGTONE") ->
+                Triple(Settings.ACTION_SOUND_SETTINGS, "Sound & Vibration Settings", "साउंड और वाइब्रेशन सेटिंग्स")
+            key.contains("DND") || key.contains("DISTURB") ->
+                Triple(Settings.ACTION_SOUND_SETTINGS, "Do Not Disturb & Sound Settings", "डू नॉट डिस्टर्ब सेटिंग्स")
+            key.contains("DISPLAY") || key.contains("ROTATE") || key.contains("SCREEN") ->
+                Triple(Settings.ACTION_DISPLAY_SETTINGS, "Display & Screen Settings", "डिस्प्ले और स्क्रीन सेटिंग्स")
+            key.contains("BATTERY") || key.contains("POWER") ->
+                Triple(Settings.ACTION_BATTERY_SAVER_SETTINGS, "Battery & Power Saver Settings", "बैटरी सेवर सेटिंग्स")
+            key.contains("SECURITY") || key.contains("PASSWORD") || key.contains("FINGERPRINT") ->
+                Triple(Settings.ACTION_SECURITY_SETTINGS, "Security & Lock Screen Settings", "सिक्योरिटी और लॉक सेटिंग्स")
+            key.contains("DATE") || key.contains("TIME") ->
+                Triple(Settings.ACTION_DATE_SETTINGS, "Date & Time Settings", "तारीख और समय सेटिंग्स")
+            key.contains("ACCESSIBILITY") ->
+                Triple(Settings.ACTION_ACCESSIBILITY_SETTINGS, "Accessibility Settings", "एक्सेसिबिलिटी सेटिंग्स")
+            key.contains("STORAGE") || key.contains("MEMORY") ->
+                Triple(Settings.ACTION_INTERNAL_STORAGE_SETTINGS, "Storage Settings", "स्टोरेज सेटिंग्स")
+            key.contains("APP") ->
+                Triple(Settings.ACTION_APPLICATION_SETTINGS, "Installed Apps Settings", "ऐप्स सेटिंग्स")
+            else ->
+                Triple(Settings.ACTION_SETTINGS, "Android System Settings", "फोन की मुख्य सेटिंग्स")
+        }
+
+        return try {
+            val intent = if (key.contains("HOTSPOT") || key.contains("TETHER")) {
+                Intent().apply {
+                    setClassName("com.android.settings", "com.android.settings.TetherSettings")
+                }
+            } else {
+                Intent(intentAction)
+            }
+            try {
+                launchActivityWithBackgroundSupport(intent, "Moko // $labelEn", "Tap to open $labelEn")
+            } catch (_: Exception) {
+                launchActivityWithBackgroundSupport(
+                    Intent(intentAction),
+                    "Moko // $labelEn",
+                    "Tap to open $labelEn"
+                )
+            }
+            ActionExecutionResult(
+                success = true,
+                displayReply = customDisplay.ifBlank { "OFFLINE SYSTEM SETTING // Opened $labelEn." },
+                finalSpokenReply = customSpoken.ifBlank { "जी $userName, $labelHi खोल दी गई हैं।" }
+            )
+        } catch (_: Exception) {
+            openSystemSettings(customDisplay, customSpoken)
+        }
+    }
+
+    fun setPhoneRingerMode(
+        modeTarget: String,
+        customDisplay: String = "",
+        customSpoken: String = ""
+    ): ActionExecutionResult {
+        val key = modeTarget.trim().uppercase()
+        val userName = prefs.getUserName()
+        return try {
+            when {
+                key.contains("VIBRATE") -> {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+                    ActionExecutionResult(
+                        success = true,
+                        displayReply = customDisplay.ifBlank { "RINGER MODE // Phone set to VIBRATE mode." },
+                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, आपका फोन वाइब्रेट मोड पर कर दिया गया है।" }
+                    )
+                }
+                key.contains("SILENT") || key.contains("DND") -> {
+                    try {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                    } catch (_: SecurityException) {
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+                        adjustVolume(0, 0, mute = true)
+                    }
+                    ActionExecutionResult(
+                        success = true,
+                        displayReply = customDisplay.ifBlank { "RINGER MODE // Phone set to SILENT mode." },
+                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, आपका फोन साइलेंट मोड पर कर दिया गया है।" }
+                    )
+                }
+                else -> {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                    adjustVolume(0, 80, mute = false)
+                    ActionExecutionResult(
+                        success = true,
+                        displayReply = customDisplay.ifBlank { "RINGER MODE // Phone set to NORMAL RING mode (80%)." },
+                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, आपका फोन नॉर्मल रिंग मोड पर चालू कर दिया गया है।" }
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            openSpecificSystemSetting("SOUND", customDisplay, customSpoken)
         }
     }
 

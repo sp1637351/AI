@@ -48,9 +48,9 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashlightOff
 import androidx.compose.material.icons.filled.FlashlightOn
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -59,9 +59,11 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -87,6 +89,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -117,7 +120,6 @@ import com.example.ui.theme.SuaAmber
 import com.example.ui.theme.SuaBorder
 import com.example.ui.theme.SuaCrimson
 import com.example.ui.theme.SuaCyan
-import com.example.ui.theme.SuaCyanDim
 import com.example.ui.theme.SuaDeepNavy
 import com.example.ui.theme.SuaElectricBlue
 import com.example.ui.theme.SuaEmerald
@@ -138,6 +140,8 @@ fun SuaDashboardScreen(
     val operatingMode by viewModel.operatingMode.collectAsStateWithLifecycle()
     val wakeRemainingSeconds by viewModel.wakeSessionRemainingSeconds.collectAsStateWithLifecycle()
     val isBgRunning by viewModel.isBackgroundServiceRunning.collectAsStateWithLifecycle()
+    val isScreenShareActive by viewModel.isScreenShareActive.collectAsStateWithLifecycle()
+    val pendingUiAction by viewModel.pendingUiNavigationAction.collectAsStateWithLifecycle()
     val liveTranscript by viewModel.liveTranscript.collectAsStateWithLifecycle()
     val lastSuaReply by viewModel.lastSuaReply.collectAsStateWithLifecycle()
     val isFlashlightOn by viewModel.isFlashlightOn.collectAsStateWithLifecycle()
@@ -159,6 +163,25 @@ fun SuaDashboardScreen(
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+
+    // Execute Voice Click UI Navigation actions ("Click Settings", "Click Menu", "Close Menu")
+    LaunchedEffect(pendingUiAction) {
+        when (pendingUiAction) {
+            "OPEN_SETTINGS" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.close()
+                onOpenSettings()
+            }
+            "OPEN_DRAWER" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.open()
+            }
+            "CLOSE_DRAWER" -> {
+                viewModel.consumeUiNavigationAction()
+                drawerState.close()
+            }
+        }
+    }
 
     val micPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -222,6 +245,7 @@ fun SuaDashboardScreen(
                     userName = userName,
                     operatingMode = operatingMode,
                     wakeRemainingSeconds = wakeRemainingSeconds,
+                    isScreenShareActive = isScreenShareActive,
                     hasApiKey = hasApiKey,
                     batteryPercent = batteryPercent,
                     isFlashlightOn = isFlashlightOn,
@@ -242,8 +266,13 @@ fun SuaDashboardScreen(
                     onSwitchToOnline = { requestModeWithMicPermission(MokoOperatingMode.ONLINE) },
                     onSwitchToSleep = { requestModeWithMicPermission(MokoOperatingMode.SLEEP) },
                     onSwitchToOffline = { viewModel.activateOfflineMode() },
+                    onToggleScreenShare = {
+                        viewModel.toggleScreenShareAndAnalyze()
+                        coroutineScope.launch { drawerState.close() }
+                    },
                     onToggleFlashlight = { viewModel.toggleFlashlightDirect() },
                     onLockPhone = { viewModel.lockScreenDirect() },
+                    onUnlockPhone = { viewModel.unlockScreenOverlay() },
                     onBrightnessChange = { viewModel.adjustBrightnessDirect(it, speakFeedback = false) },
                     onBrightnessCommit = { viewModel.adjustBrightnessDirect(brightnessPercent, speakFeedback = true) },
                     onVolumeChange = { viewModel.adjustVolumeDirect(it, speakFeedback = false) },
@@ -317,7 +346,7 @@ fun SuaDashboardScreen(
                                             .padding(horizontal = 5.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "KALPA AI",
+                                            text = "BY ${SuaPreferences.DEVELOPER_NAME}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = SuaCyan,
                                             fontWeight = FontWeight.Bold
@@ -330,8 +359,8 @@ fun SuaDashboardScreen(
                                             if (wakeRemainingSeconds > 0) "ONLINE • Active ${wakeRemainingSeconds}s"
                                             else "ONLINE • Standby ('Hi $assistantName')"
                                         MokoOperatingMode.SLEEP ->
-                                            if (wakeRemainingSeconds > 0) "SLEEP • Hardware ${wakeRemainingSeconds}s"
-                                            else "SLEEP • Offline Hardware ('Hi $assistantName')"
+                                            if (wakeRemainingSeconds > 0) "SLEEP • Offline ${wakeRemainingSeconds}s"
+                                            else "SLEEP • Offline Mode ('Hi $assistantName')"
                                         MokoOperatingMode.OFFLINE ->
                                             "OFFLINE • Background Mic Off"
                                     },
@@ -370,7 +399,8 @@ fun SuaDashboardScreen(
                     )
                 },
                 bottomBar = {
-                    // Deep Purple & Neon Violet Glass Bottom Voice + Message Bar
+                    // Deep Purple & Neon Violet Glass Bottom Bar:
+                    // [VOICE] + [SCREEN SHARE] + [Message Input] + [SEND]
                     Surface(
                         color = Color.Transparent,
                         modifier = Modifier.fillMaxWidth()
@@ -392,12 +422,12 @@ fun SuaDashboardScreen(
                                     violetGlassBrush,
                                     RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
                                 )
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                                .padding(horizontal = 12.dp, vertical = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 // 1. VOICE BUTTON (Wakes 60s window or starts Online Mode)
                                 val isVoiceActive = isBgRunning && wakeRemainingSeconds > 0
@@ -410,7 +440,7 @@ fun SuaDashboardScreen(
                                         }
                                     },
                                     modifier = Modifier
-                                        .height(52.dp)
+                                        .height(50.dp)
                                         .border(
                                             1.2.dp,
                                             when {
@@ -422,6 +452,7 @@ fun SuaDashboardScreen(
                                         )
                                         .testTag("bottom_voice_toggle_button"),
                                     shape = RoundedCornerShape(14.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = when {
                                             isVoiceActive -> SuaEmerald.copy(alpha = 0.22f)
@@ -438,21 +469,54 @@ fun SuaDashboardScreen(
                                     Icon(
                                         imageVector = if (isBgRunning) Icons.Default.Mic else Icons.Default.MicOff,
                                         contentDescription = "Toggle Voice Mode",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = when {
                                             isVoiceActive -> "${wakeRemainingSeconds}s"
                                             isBgRunning -> "WAKE"
                                             else -> "VOICE"
                                         },
-                                        style = MaterialTheme.typography.labelLarge,
+                                        style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.ExtraBold
                                     )
                                 }
 
-                                // 2. MESSAGE INPUT FIELD (100% English placeholder)
+                                // 2. SCREEN SHARE BUTTON (Right next to Message bar: AI Screen Analysis + Voice Click & Unlock)
+                                Button(
+                                    onClick = {
+                                        viewModel.toggleScreenShareAndAnalyze()
+                                    },
+                                    modifier = Modifier
+                                        .height(50.dp)
+                                        .border(
+                                            1.2.dp,
+                                            if (isScreenShareActive) SuaEmerald else SuaCyan,
+                                            RoundedCornerShape(14.dp)
+                                        )
+                                        .testTag("bottom_screen_share_button"),
+                                    shape = RoundedCornerShape(14.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isScreenShareActive) SuaEmerald.copy(alpha = 0.24f) else SuaSurfaceElevated,
+                                        contentColor = if (isScreenShareActive) SuaEmerald else SuaCyan
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = if (isScreenShareActive) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
+                                        contentDescription = "Screen Share & Analyze",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (isScreenShareActive) "SHARED" else "SHARE",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+
+                                // 3. MESSAGE INPUT FIELD (100% English placeholder)
                                 OutlinedTextField(
                                     value = commandInput,
                                     onValueChange = { commandInput = it },
@@ -461,7 +525,7 @@ fun SuaDashboardScreen(
                                         .testTag("command_input_field"),
                                     placeholder = {
                                         Text(
-                                            text = "Ask $assistantName (Call, Bluetooth Off, SMS)...",
+                                            text = "Message $assistantName...",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = SuaTextSecondary,
                                             maxLines = 1,
@@ -489,7 +553,7 @@ fun SuaDashboardScreen(
                                     )
                                 )
 
-                                // 3. SEND MESSAGE BUTTON
+                                // 4. SEND MESSAGE BUTTON
                                 Button(
                                     onClick = {
                                         if (commandInput.isNotBlank()) {
@@ -498,7 +562,7 @@ fun SuaDashboardScreen(
                                         }
                                     },
                                     modifier = Modifier
-                                        .size(52.dp)
+                                        .size(50.dp)
                                         .testTag("send_command_button"),
                                     shape = RoundedCornerShape(14.dp),
                                     contentPadding = PaddingValues(0.dp),
@@ -517,6 +581,8 @@ fun SuaDashboardScreen(
                     }
                 }
             ) { innerPadding ->
+                // CLEAN MINIMAL MAIN SCREEN:
+                // Only Center Orb (with Moko's Reply in the center) + User Spoken Text at the bottom
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -524,60 +590,9 @@ fun SuaDashboardScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Top Violet Glass Identity & Settings Bar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 600.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(SuaSurfaceCard.copy(alpha = 0.85f))
-                            .border(1.dp, violetGlassBrush, RoundedCornerShape(16.dp))
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "USER: ${userName.uppercase()} • DEV: ${SuaPreferences.DEVELOPER_NAME}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = SuaTextPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "SAY \"HI ${assistantName.uppercase()}\" ONCE -> TALK CONTINUOUSLY (60s AUTO-STANDBY)",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaCyan
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        OutlinedButton(
-                            onClick = onOpenSettings,
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan.copy(alpha = 0.7f)),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("main_open_history_settings_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.History,
-                                contentDescription = "Open History & Settings",
-                                tint = SuaCyan,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "HISTORY (${commandLogs.size})",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = SuaTextPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // Active Call / SMS / WhatsApp Multi-Number & Hindi/English Confirmation Card
+                    // Active Call / SMS / WhatsApp Multi-Number & Hindi/English Confirmation Card (only shown when confirming a Call/SMS)
                     AnimatedVisibility(visible = pendingComms != null) {
                         pendingComms?.let { activePending ->
                             PendingCommsConfirmationCard(
@@ -587,17 +602,16 @@ fun SuaDashboardScreen(
                         }
                     }
 
-                    // RESTORED DEEP PURPLE & NEON VIOLET GLASS ORB CARD WITH 60s COUNTDOWN BADGE
+                    // 1. CENTER AREA: NEON VIOLET GLASS ORB + MOKO RESPONSE IN CENTER
                     NeonVioletGlassOrbCard(
                         assistantName = assistantName,
                         userName = userName,
                         status = status,
                         operatingMode = operatingMode,
                         wakeRemainingSeconds = wakeRemainingSeconds,
+                        isScreenShareActive = isScreenShareActive,
                         audioRms = audioRms,
-                        liveTranscript = liveTranscript,
-                        lastReply = lastSuaReply,
-                        memoryCount = memoryItems.size,
+                        centerMokoReply = lastSuaReply,
                         onTapOrb = {
                             if (operatingMode == MokoOperatingMode.OFFLINE) {
                                 requestModeWithMicPermission(MokoOperatingMode.ONLINE)
@@ -605,11 +619,18 @@ fun SuaDashboardScreen(
                                 viewModel.wakeOrToggleFromOrb()
                             }
                         },
-                        onTestVoice = { viewModel.testVoiceGreeting() },
-                        onQuickCommand = { viewModel.executeCommandText(it) }
+                        onToggleScreenShare = { viewModel.toggleScreenShareAndAnalyze() },
+                        onTestVoice = { viewModel.testVoiceGreeting() }
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 2. BOTTOM SPOKEN DISPLAY: ONLY WHAT THE USER SPOKE
+                    UserSpokenBottomCard(
+                        userSpokenText = liveTranscript,
+                        operatingMode = operatingMode,
+                        isScreenShareActive = isScreenShareActive
+                    )
                 }
             }
 
@@ -623,6 +644,63 @@ fun SuaDashboardScreen(
                     onUnlock = { viewModel.unlockScreenOverlay() }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun UserSpokenBottomCard(
+    userSpokenText: String,
+    operatingMode: MokoOperatingMode,
+    isScreenShareActive: Boolean
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 600.dp)
+            .testTag("user_spoken_bottom_card"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = SuaSurfaceCard.copy(alpha = 0.90f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    width = 1.2.dp,
+                    color = if (isScreenShareActive) SuaEmerald.copy(alpha = 0.75f) else SuaCyan.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(18.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "YOU SPOKE:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaCyan,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = if (isScreenShareActive) {
+                        "SCREEN SHARE ON • VOICE CLICK READY"
+                    } else {
+                        "${operatingMode.label} MODE"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isScreenShareActive) SuaEmerald else SuaTextSecondary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = userSpokenText,
+                style = MaterialTheme.typography.bodyLarge,
+                color = SuaTextPrimary,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -844,13 +922,12 @@ private fun NeonVioletGlassOrbCard(
     status: SuaStatus,
     operatingMode: MokoOperatingMode,
     wakeRemainingSeconds: Int,
+    isScreenShareActive: Boolean,
     audioRms: Float,
-    liveTranscript: String,
-    lastReply: String,
-    memoryCount: Int,
+    centerMokoReply: String,
     onTapOrb: () -> Unit,
-    onTestVoice: () -> Unit,
-    onQuickCommand: (String) -> Unit
+    onToggleScreenShare: () -> Unit,
+    onTestVoice: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "violet_orb_pulse")
     val ringRotation by infiniteTransition.animateFloat(
@@ -952,8 +1029,8 @@ private fun NeonVioletGlassOrbCard(
                             text = when {
                                 status == SuaStatus.SPEAKING -> "${assistantName.uppercase()} SPEAKING • 60s"
                                 status == SuaStatus.PROCESSING -> "${assistantName.uppercase()} THINKING..."
-                                operatingMode == MokoOperatingMode.OFFLINE -> "OFFLINE • MIC & BG STOPPED"
-                                isInActive60sSession -> "ACTIVE SESSION • ${wakeRemainingSeconds}s (${operatingMode.label})"
+                                operatingMode == MokoOperatingMode.OFFLINE -> "OFFLINE • MIC STOPPED"
+                                isInActive60sSession -> "ACTIVE • ${wakeRemainingSeconds}s (${operatingMode.label})"
                                 else -> "STANDBY • SAY 'HI ${assistantName.uppercase()}'"
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -963,41 +1040,51 @@ private fun NeonVioletGlassOrbCard(
                     }
                 }
 
+                // Screen Share Status / Voice Test Badge
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(SuaCyan.copy(alpha = 0.14f))
-                        .border(1.dp, SuaCyan.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-                        .clickable { onTestVoice() }
+                        .background(
+                            if (isScreenShareActive) SuaEmerald.copy(alpha = 0.18f)
+                            else SuaCyan.copy(alpha = 0.14f)
+                        )
+                        .border(
+                            1.dp,
+                            if (isScreenShareActive) SuaEmerald else SuaCyan.copy(alpha = 0.55f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable {
+                            if (isScreenShareActive) onToggleScreenShare() else onTestVoice()
+                        }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                         .testTag("orb_test_voice_badge")
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.RecordVoiceOver,
-                            contentDescription = "Test Kalpa AI Voice",
-                            tint = SuaCyan,
+                            imageVector = if (isScreenShareActive) Icons.Default.ScreenShare else Icons.Default.RecordVoiceOver,
+                            contentDescription = "Screen Share or Test Voice",
+                            tint = if (isScreenShareActive) SuaEmerald else SuaCyan,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = "KALPA • $memoryCount MEM",
+                            text = if (isScreenShareActive) "SCREEN SHARE ON" else "KALPA VOICE",
                             style = MaterialTheme.typography.labelSmall,
-                            color = SuaTextPrimary,
+                            color = if (isScreenShareActive) SuaEmerald else SuaTextPrimary,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
             // DEEP PURPLE & NEON VIOLET GLASS VOICE ORB
             val normalizedRms = ((audioRms + 2f) / 12f).coerceIn(0f, 1f)
 
             Box(
                 modifier = Modifier
-                    .size(200.dp)
+                    .size(210.dp)
                     .clip(CircleShape)
                     .clickable { onTapOrb() }
                     .testTag("central_mic_orb"),
@@ -1096,7 +1183,7 @@ private fun NeonVioletGlassOrbCard(
                         imageVector = if (isServiceActive) Icons.Default.Mic else Icons.Default.MicOff,
                         contentDescription = operatingMode.label,
                         tint = activeAccentColor,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(38.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -1111,8 +1198,8 @@ private fun NeonVioletGlassOrbCard(
                     )
                     Text(
                         text = when {
-                            operatingMode == MokoOperatingMode.OFFLINE -> "Tap to Start Online"
-                            isInActive60sSession -> "${operatingMode.label} • Speak Directly"
+                            operatingMode == MokoOperatingMode.OFFLINE -> "Tap to Start"
+                            isInActive60sSession -> "${operatingMode.label} • Speak Now"
                             else -> "Say 'Hi $assistantName'"
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -1122,85 +1209,32 @@ private fun NeonVioletGlassOrbCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Quick Action Chips Row (Strictly 100% English UI Labels, includes Bluetooth & Internet Offline Controls)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                QuickGlassChip("Call Contact") { onQuickCommand("Call Khushi") }
-                QuickGlassChip("Bluetooth OFF") { onQuickCommand("Turn off Bluetooth") }
-                QuickGlassChip("Bluetooth ON") { onQuickCommand("Turn on Bluetooth") }
-                QuickGlassChip("Internet OFF") { onQuickCommand("Turn off Internet") }
-                QuickGlassChip("Send SMS") { onQuickCommand("Send SMS to Khushi") }
-                QuickGlassChip("WhatsApp Msg") { onQuickCommand("Send WhatsApp message to Khushi") }
-                QuickGlassChip("Flashlight") { onQuickCommand("Turn on flashlight") }
-                QuickGlassChip("Who Developed You?") { onQuickCommand("Who developed you?") }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Violet Glass Live Transcript & Response Panel
+            // CENTER DISPLAY: MOKO'S REPLY & SCREEN SHARE ANALYSIS
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
-                    .background(SuaObsidian.copy(alpha = 0.72f))
+                    .background(SuaObsidian.copy(alpha = 0.76f))
                     .border(1.2.dp, SuaBorder, RoundedCornerShape(18.dp))
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "LIVE VOICE / COMMAND:",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = SuaCyan,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        text = when (operatingMode) {
-                            MokoOperatingMode.ONLINE -> "ONLINE • AI + HARDWARE"
-                            MokoOperatingMode.SLEEP -> "SLEEP • OFFLINE HARDWARE ONLY"
-                            MokoOperatingMode.OFFLINE -> "OFFLINE • BACKGROUND OFF"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when (operatingMode) {
-                            MokoOperatingMode.ONLINE -> SuaEmerald
-                            MokoOperatingMode.SLEEP -> SuaAmber
-                            MokoOperatingMode.OFFLINE -> SuaCrimson
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
                 Text(
-                    text = liveTranscript,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = SuaTextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
-
-                HorizontalDivider(color = SuaBorder.copy(alpha = 0.6f), thickness = 1.dp)
-
-                Text(
-                    text = "${assistantName.uppercase()} RESPONSE:",
+                    text = "${assistantName.uppercase()} CENTER RESPONSE",
                     style = MaterialTheme.typography.labelSmall,
                     color = SuaEmerald,
                     fontWeight = FontWeight.ExtraBold
                 )
 
                 Text(
-                    text = lastReply,
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = centerMokoReply,
+                    style = MaterialTheme.typography.bodyLarge,
                     color = SuaTextPrimary,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -1213,6 +1247,7 @@ private fun MokoSideDrawerContent(
     userName: String,
     operatingMode: MokoOperatingMode,
     wakeRemainingSeconds: Int,
+    isScreenShareActive: Boolean,
     hasApiKey: Boolean,
     batteryPercent: Int,
     isFlashlightOn: Boolean,
@@ -1226,8 +1261,10 @@ private fun MokoSideDrawerContent(
     onSwitchToOnline: () -> Unit,
     onSwitchToSleep: () -> Unit,
     onSwitchToOffline: () -> Unit,
+    onToggleScreenShare: () -> Unit,
     onToggleFlashlight: () -> Unit,
     onLockPhone: () -> Unit,
+    onUnlockPhone: () -> Unit,
     onBrightnessChange: (Int) -> Unit,
     onBrightnessCommit: () -> Unit,
     onVolumeChange: (Int) -> Unit,
@@ -1329,6 +1366,31 @@ private fun MokoSideDrawerContent(
             )
         }
 
+        // Screen Share & Vision Button inside Drawer
+        OutlinedButton(
+            onClick = onToggleScreenShare,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(
+                1.2.dp,
+                if (isScreenShareActive) SuaEmerald else SuaCyan
+            )
+        ) {
+            Icon(
+                imageVector = if (isScreenShareActive) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
+                contentDescription = "Screen Share",
+                tint = if (isScreenShareActive) SuaEmerald else SuaCyan
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isScreenShareActive) "STOP SCREEN SHARE (ACTIVE)" else "START SCREEN SHARE & ANALYZE",
+                color = SuaTextPrimary,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+
         // 3-Mode System Buttons: ONLINE vs SLEEP vs OFFLINE
         Text(
             text = "SYSTEM OPERATING MODE (ONLINE / SLEEP / OFFLINE)",
@@ -1394,7 +1456,7 @@ private fun MokoSideDrawerContent(
 
         HorizontalDivider(color = SuaBorder)
 
-        // Hardware Controls (Works in both ONLINE & SLEEP Modes)
+        // Hardware Controls (Works 100% Offline in both ONLINE & SLEEP Modes)
         Text(
             text = "OFFLINE & HARDWARE CONTROLS",
             style = MaterialTheme.typography.labelMedium,
@@ -1457,6 +1519,29 @@ private fun MokoSideDrawerContent(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             OutlinedButton(
+                onClick = onUnlockPhone,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaEmerald)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LockOpen,
+                    contentDescription = "Unlock Screen",
+                    tint = SuaEmerald,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "UNLOCK",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            OutlinedButton(
                 onClick = { onExecuteCommand("Turn off Bluetooth") },
                 modifier = Modifier
                     .weight(1f)
@@ -1471,7 +1556,12 @@ private fun MokoSideDrawerContent(
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             OutlinedButton(
                 onClick = { onExecuteCommand("Turn off Internet") },
                 modifier = Modifier
@@ -1482,6 +1572,22 @@ private fun MokoSideDrawerContent(
             ) {
                 Text(
                     text = "INTERNET OFF",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SuaTextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            OutlinedButton(
+                onClick = { onExecuteCommand("Open Hotspot") },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, SuaCyan)
+            ) {
+                Text(
+                    text = "HOTSPOT",
                     style = MaterialTheme.typography.labelSmall,
                     color = SuaTextPrimary,
                     fontWeight = FontWeight.Bold
@@ -1595,9 +1701,9 @@ private fun MokoSideDrawerContent(
             }
         }
 
-        // Quick App Launchers & Voice Actions (100% English UI)
+        // Quick App Launchers & Offline System Actions (100% English UI)
         Text(
-            text = "VOICE APP LAUNCHER & ACTIONS",
+            text = "OFFLINE SYSTEM SETTINGS & APPS",
             style = MaterialTheme.typography.labelMedium,
             color = SuaCyan,
             fontWeight = FontWeight.ExtraBold
@@ -1606,10 +1712,10 @@ private fun MokoSideDrawerContent(
         val quickVoiceActions = listOf(
             "Open WhatsApp" to "Open WhatsApp",
             "Open YouTube" to "Open YouTube",
-            "Open Instagram" to "Open Instagram",
             "Open Camera" to "Open Camera",
-            "Send WhatsApp Msg" to "Send WhatsApp message to Khushi",
-            "Speak Both Numbers" to "Speak both numbers",
+            "Silent Mode" to "Silent mode",
+            "Normal Ring" to "Normal ring mode",
+            "Location / GPS" to "Open Location",
             "Who Developed You?" to "Who developed you?",
             "Battery Status" to "Check battery status"
         )
@@ -1685,7 +1791,7 @@ private fun SuaScreenLockOverlay(onUnlock: () -> Unit) {
             )
 
             Text(
-                text = "Background voice control remains active. Say any command or tap below to unlock.",
+                text = "Say 'Unlock screen' / 'Lock kholo' or tap below to unlock.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = SuaTextSecondary,
                 textAlign = TextAlign.Center
