@@ -1,8 +1,10 @@
-
-name: Build SUA Android APK
+name: Build Moko Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - '*'
 
 jobs:
   build:
@@ -23,24 +25,32 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Generate Debug Keystore
+      - name: Prepare .env & Debug Keystore
         run: |
-          keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+            cp .env.example .env
+          fi
+          rm -f debug.keystore
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
-      - name: Build Debug APK
-        run: gradle assembleDebug
+      - name: Build Latest Moko Debug APK
+        run: gradle assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload Moko APK
         uses: actions/upload-artifact@v4
         with:
-          name: SUA-Debug-APK
+          name: Moko-Debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
