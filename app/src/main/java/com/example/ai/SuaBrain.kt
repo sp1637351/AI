@@ -37,12 +37,12 @@ class SuaBrain(
     }
 
     suspend fun interpretCommand(rawInput: String): ParsedCommand = withContext(Dispatchers.IO) {
-        val text = rawInput.trim()
+        val rawTrimmed = rawInput.trim()
         val userName = prefs.getUserName()
         val assistantName = prefs.getAssistantName()
-        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
+        val speakEn = HindiTransliterator.isPrimarilyEnglish(rawTrimmed)
 
-        if (text.isEmpty()) {
+        if (rawTrimmed.isEmpty()) {
             return@withContext ParsedCommand(
                 action = DeviceActionType.AI_CHAT,
                 displayReply = "$assistantName is listening. Say 'Ok $assistantName' or 'Hi $assistantName' followed by your command.",
@@ -55,7 +55,7 @@ class SuaBrain(
         }
 
         // 00. Instant STOP / CANCEL Command ("स्टॉप", "रुको", "बस करो", "चुप हो जाओ", "stop", "ruk jao")
-        if (HindiTransliterator.isStopCommand(text, assistantName)) {
+        if (HindiTransliterator.isStopCommand(rawTrimmed, assistantName)) {
             SuaStateRepository.setPendingComms(null)
             return@withContext ParsedCommand(
                 action = DeviceActionType.STOP_ACTION,
@@ -64,13 +64,21 @@ class SuaBrain(
             )
         }
 
+        // Normalize common speech-to-text mistakes and strip mid-sentence correction prefixes ("नहीं नहीं प्राइम मिनिस्टर कौन है")
+        val normalizedText = HindiTransliterator.normalizeVoiceMistakes(rawTrimmed)
+        val (wasCorrection, strippedCorrection) = HindiTransliterator.stripConversationalCorrectionPrefix(normalizedText)
+        val text = if (wasCorrection && strippedCorrection.isNotBlank()) strippedCorrection else normalizedText
+
         // 0A. Check if there is an active Multi-Step Call / SMS / WhatsApp Confirmation waiting for user reply
         val activePending = SuaStateRepository.pendingComms.value
-        if (activePending != null) {
+        if (activePending != null && !wasCorrection) {
             val pendingReply = handleActiveCommsConfirmation(text, activePending, userName, assistantName, speakEn)
             if (pendingReply != null) {
                 return@withContext pendingReply
             }
+        } else if (activePending != null && wasCorrection) {
+            // User corrected/changed their mind mid-flow ("नहीं नहीं...") -> clear old pending state and process new command!
+            SuaStateRepository.setPendingComms(null)
         }
 
         // 0B. Check if user is asking to read out / speak the contact phone numbers ("दोनों नंबर बोलो" / "नंबर बोलो" / "speak both numbers")
@@ -95,6 +103,12 @@ class SuaBrain(
         val localMemoryCmd = parseMemoryIntentLocally(text, userName, assistantName)
         if (localMemoryCmd != null) {
             return@withContext localMemoryCmd
+        }
+
+        // 2B. Fast Context-Aware Knowledge & Memory Vault Analyzer (instant response for "भारत का राष्ट्रपति कौन है" -> "नहीं नहीं प्राइम मिनिस्टर कौन है" & saved memories even on slow internet!)
+        val localKnowledgeCmd = parseKnowledgeAndContextLocally(text, wasCorrection, userName, assistantName, speakEn)
+        if (localKnowledgeCmd != null) {
+            return@withContext localKnowledgeCmd
         }
 
         // 3. Check local Hardware, App Launch, Call, SMS & WhatsApp intents
@@ -920,19 +934,107 @@ class SuaBrain(
         }
     }
 
+    fun parseKnowledgeAndContextLocally(
+        rawText: String,
+        wasCorrection: Boolean = false,
+        userName: String = prefs.getUserName(),
+        assistantName: String = prefs.getAssistantName(),
+        speakEn: Boolean = HindiTransliterator.isPrimarilyEnglish(rawText)
+    ): ParsedCommand? {
+        val normalized = HindiTransliterator.normalizeVoiceMistakes(rawText)
+        val (autoWasCorrection, stripped) = HindiTransliterator.stripConversationalCorrectionPrefix(normalized)
+        val text = stripped.ifEmpty { normalized }
+        val effectiveCorrection = wasCorrection || autoWasCorrection
+        val lower = text.lowercase()
+        val prefixHi = if (effectiveCorrection) "अच्छा जी $userName! " else "जी $userName, "
+        val prefixEn = if (effectiveCorrection) "Got it $userName! " else "Yes $userName, "
+
+        // 1. Prime Minister of India ("प्राइम मिनिस्टर कौन है", "प्रधानमंत्री कौन है", "who is the prime minister")
+        val asksPrimeMinister = lower.contains("prime minister") || lower.contains("pradhanmantri") ||
+            lower.contains("pradhan mantri") || Regex("\\bpm\\s+kaun\\b").containsMatchIn(lower) ||
+            text.contains("प्राइम मिनिस्टर") || text.contains("प्रधानमंत्री") || text.contains("प्रधान मंत्री")
+        if (asksPrimeMinister) {
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName KNOWLEDGE // Prime Minister of India: Shri Narendra Modi.",
+                spokenReply = if (speakEn) {
+                    "${prefixEn}The current Prime Minister of India is Shri Narendra Modi."
+                } else {
+                    "${prefixHi}भारत के वर्तमान प्रधानमंत्री श्री नरेंद्र मोदी हैं।"
+                }
+            )
+        }
+
+        // 2. President of India ("भारत का राष्ट्रपति कौन है", "राष्ट्रपति कौन है", "who is the president of india")
+        val asksPresident = lower.contains("president of india") || lower.contains("rashtrapati") ||
+            text.contains("राष्ट्रपति कौन") || text.contains("भारत का राष्ट्रपति") || text.contains("भारत की राष्ट्रपति")
+        if (asksPresident) {
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName KNOWLEDGE // President of India: Smt. Droupadi Murmu.",
+                spokenReply = if (speakEn) {
+                    "${prefixEn}The current President of India is Smt. Droupadi Murmu."
+                } else {
+                    "${prefixHi}भारत की वर्तमान राष्ट्रपति श्रीमती द्रौपदी मुर्मू हैं।"
+                }
+            )
+        }
+
+        // 3. Capital of India ("भारत की राजधानी क्या है", "capital of india")
+        if (lower.contains("capital of india") || (text.contains("भारत") && text.contains("राजधानी"))) {
+            return ParsedCommand(
+                action = DeviceActionType.AI_CHAT,
+                displayReply = "$assistantName KNOWLEDGE // Capital of India: New Delhi.",
+                spokenReply = if (speakEn) {
+                    "${prefixEn}The capital of India is New Delhi."
+                } else {
+                    "${prefixHi}भारत की राजधानी नई दिल्ली है।"
+                }
+            )
+        }
+
+        // 4. Deep Memory Vault Query Matching (when user asks a question matching a fact stored in Memory Vault)
+        val isQuestion = text.contains("?") || text.contains("क्या") || text.contains("कौन") ||
+            text.contains("कब") || text.contains("कहाँ") ||
+            Regex("\\b(kya|kaun|kab|kahan|what|who|when|where|which)\\b").containsMatchIn(lower)
+        if (isQuestion) {
+            val memories = SuaStateRepository.memoryItems.value
+            if (memories.isNotEmpty()) {
+                val queryRomanTokens = HindiTransliterator.toRoman(text).lowercase()
+                    .replace(Regex("[^a-z0-9\\s]"), " ")
+                    .split(Regex("\\s+"))
+                    .filter { it.length >= 3 && it !in setOf("kya", "kaun", "kab", "kahan", "hai", "hain", "mera", "meri", "mere", "what", "who", "when", "where", "the", "your") }
+                if (queryRomanTokens.isNotEmpty()) {
+                    val bestMemory = memories.firstOrNull { mem ->
+                        val memRoman = HindiTransliterator.toRoman(mem.factText).lowercase()
+                        queryRomanTokens.any { qt -> memRoman.contains(qt) }
+                    }
+                    if (bestMemory != null) {
+                        return ParsedCommand(
+                            action = DeviceActionType.AI_CHAT,
+                            displayReply = "$assistantName MEMORY RECALL // From your saved memory: ${bestMemory.factText}",
+                            spokenReply = if (speakEn) {
+                                "${prefixEn}From my memory, I remember that ${bestMemory.factText}."
+                            } else {
+                                "${prefixHi}मुझे आपकी मेमोरी से याद है कि ${bestMemory.factText}।"
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        return null
+    }
+
     fun parseHardwareIntentLocally(
         input: String,
         userName: String = prefs.getUserName(),
         assistantName: String = prefs.getAssistantName()
     ): ParsedCommand? {
-        val text = input.trim()
-        val lower = text.lowercase()
-        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
-        val numberRegex = Regex("(\\d{1,3})")
-        val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
-
+        val rawTrim = input.trim()
         // 00. Instant STOP / CANCEL Command ("स्टॉप", "रुको", "बस करो", "stop")
-        if (HindiTransliterator.isStopCommand(text, assistantName)) {
+        if (HindiTransliterator.isStopCommand(rawTrim, assistantName)) {
             SuaStateRepository.setPendingComms(null)
             return ParsedCommand(
                 action = DeviceActionType.STOP_ACTION,
@@ -940,6 +1042,14 @@ class SuaBrain(
                 spokenReply = ""
             )
         }
+
+        val normalizedInput = HindiTransliterator.normalizeVoiceMistakes(rawTrim)
+        val (_, strippedInput) = HindiTransliterator.stripConversationalCorrectionPrefix(normalizedInput)
+        val text = strippedInput.ifEmpty { normalizedInput }
+        val lower = text.lowercase()
+        val speakEn = HindiTransliterator.isPrimarilyEnglish(text)
+        val numberRegex = Regex("(\\d{1,3})")
+        val extractedNum = numberRegex.find(lower)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: -1
 
         // 0A. SCREEN SHARE & SCREEN ANALYSIS ("स्क्रीन शेयर करो", "स्क्रीन देखो", "स्क्रीन एनालाइज करो", "Share screen", "Analyze screen")
         val hasScreenShareIntent = lower.contains("screen share") || lower.contains("share screen") ||
@@ -1250,76 +1360,86 @@ class SuaBrain(
             }
         }
 
-        // 4. SOUND / VOLUME
-        val hasVolumeWord = lower.contains("volume") || lower.contains("sound") ||
+        // 4. SOUND / VOLUME (including "म्यूजिक का साउंड कम करो", "गाना धीमा करो", "म्यूजिक तेज करो" while music is playing)
+        val hasExplicitVolumeWord = lower.contains("volume") || lower.contains("sound") ||
             lower.contains("awaz") || lower.contains("aawaz") || lower.contains("mute") ||
             text.contains("साउंड") || text.contains("आवाज़") || text.contains("आवाज") ||
             text.contains("वॉल्यूम") || text.contains("म्यूट")
+        val hasMusicOrSongWord = lower.contains("music") || lower.contains("song") ||
+            lower.contains("gana") || lower.contains("gaana") ||
+            text.contains("म्यूजिक") || text.contains("गाना") || text.contains("गाने") || text.contains("सॉन्ग")
+        val hasVolumeDirection = lower.contains("kam") || lower.contains("dhima") || lower.contains("dheema") ||
+            lower.contains("slow") || lower.contains("low") || lower.contains("down") || lower.contains("decrease") ||
+            lower.contains("badha") || lower.contains("tej") || lower.contains("tez") || lower.contains("loud") ||
+            lower.contains("high") || lower.contains("up") || lower.contains("increase") || lower.contains("full") ||
+            text.contains("कम") || text.contains("धीमा") || text.contains("स्लो") || text.contains("घटा") ||
+            text.contains("बढ़ा") || text.contains("तेज") || text.contains("तेज़") || text.contains("ज्यादा") || text.contains("फुल")
+        val hasVolumeWord = hasExplicitVolumeWord || (hasMusicOrSongWord && hasVolumeDirection)
+
         if (hasVolumeWord) {
             val isMute = lower.contains("mute") || lower.contains("silent") ||
-                text.contains("म्यूट") || text.contains("साइलेंट") || text.contains("बंद")
+                text.contains("म्यूट") || text.contains("साइलेंट")
             val isDown = lower.contains("kam") || lower.contains("down") || lower.contains("decrease") ||
-                lower.contains("low") || text.contains("कम") || text.contains("घटा") || text.contains("धीमा")
+                lower.contains("low") || lower.contains("dhima") || lower.contains("dheema") || lower.contains("slow") ||
+                text.contains("कम") || text.contains("घटा") || text.contains("धीमा") || text.contains("स्लो")
+            val musicActive = controller?.isDeviceMusicCurrentlyActive() == true
             return when {
                 isMute -> ParsedCommand(
                     action = DeviceActionType.VOLUME_MUTE,
                     displayReply = "$assistantName AUDIO // System sound muted (0%).",
-                    spokenReply = if (speakEn) "Phone volume has been muted, $userName." else "जी $userName, फोन का साउंड म्यूट कर दिया गया है।"
+                    spokenReply = if (musicActive) "" else if (speakEn) "Phone volume has been muted, $userName." else "जी $userName, फोन का साउंड म्यूट कर दिया गया है।"
                 )
                 lower.contains("full") || text.contains("फुल") -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = 100,
                     displayReply = "$assistantName AUDIO // Volume set to 100%.",
-                    spokenReply = if (speakEn) "Volume set to 100 percent, $userName." else "जी $userName, साउंड फुल सौ प्रतिशत कर दिया गया है।"
+                    spokenReply = if (musicActive) "" else if (speakEn) "Volume set to 100 percent, $userName." else "जी $userName, साउंड फुल सौ प्रतिशत कर दिया गया है।"
                 )
                 extractedNum in 0..100 -> ParsedCommand(
                     action = DeviceActionType.VOLUME_SET,
                     numericValue = extractedNum,
                     displayReply = "$assistantName AUDIO // Volume set to $extractedNum%.",
-                    spokenReply = if (speakEn) "Volume set to $extractedNum percent, $userName." else "जी $userName, साउंड $extractedNum प्रतिशत कर दिया गया है।"
+                    spokenReply = if (musicActive) "" else if (speakEn) "Volume set to $extractedNum percent, $userName." else "जी $userName, साउंड $extractedNum प्रतिशत कर दिया गया है।"
                 )
                 isDown -> ParsedCommand(
                     action = DeviceActionType.VOLUME_DOWN,
                     displayReply = "$assistantName AUDIO // Decreasing volume by 20%.",
-                    spokenReply = if (speakEn) "Decreasing phone volume, $userName." else "जी $userName, फोन की आवाज़ कम कर दी गई है।"
+                    spokenReply = if (musicActive) "" else if (speakEn) "Decreasing phone volume, $userName." else "जी $userName, फोन की आवाज़ कम कर दी गई है।"
                 )
                 else -> ParsedCommand(
                     action = DeviceActionType.VOLUME_UP,
                     displayReply = "$assistantName AUDIO // Increasing volume by 20%.",
-                    spokenReply = if (speakEn) "Increasing phone volume, $userName." else "जी $userName, फोन का साउंड बढ़ा दिया गया है।"
+                    spokenReply = if (musicActive) "" else if (speakEn) "Increasing phone volume, $userName." else "जी $userName, फोन का साउंड बढ़ा दिया गया है।"
                 )
             }
         }
 
-        // 5A. YOUTUBE MUSIC / SONG / VIDEO PLAYBACK ("यूट्यूब पर म्यूजिक चलाओ", "यूट्यूब पर गाना बजाओ", "Play music on YouTube", "म्यूजिक चलाओ", "गाना बजाओ")
+        // 5A. YOUTUBE MUSIC / SONG / VIDEO PLAYBACK ("यूट्यूब पर म्यूजिक चलाओ", "यूट्यूब खोलो एक अच्छा सा गाना लगाओ", "एक अच्छा सा हिंदी म्यूजिक बजाओ", "सैड सॉन्ग लगाओ")
         val hasYouTubeWord = lower.contains("youtube") || lower.contains("you tube") || lower.contains("utube") ||
             text.contains("यूट्यूब") || text.contains("यू ट्यूब") || text.contains("युटुब") || text.contains("यूटुब")
-        val hasMusicWord = lower.contains("music") || lower.contains("song") || lower.contains("gana") ||
-            lower.contains("gaana") || text.contains("म्यूजिक") || text.contains("गाना") ||
-            text.contains("सॉन्ग") || text.contains("गीत") || text.contains("भजन") ||
-            lower.contains("next track") || lower.contains("previous track") ||
+        val hasMusicWord = hasMusicOrSongWord || text.contains("गीत") || text.contains("भजन") ||
+            lower.contains("bhajan") || lower.contains("next track") || lower.contains("previous track") ||
             lower.contains("play music") || lower.contains("pause music")
         val hasPlayVerb = lower.contains("play") || lower.contains("chalao") || lower.contains("chala") ||
             lower.contains("bajao") || lower.contains("baja") || lower.contains("lagao") ||
-            lower.contains("sunao") ||
+            lower.contains("laga") || lower.contains("sunao") ||
             text.contains("चलाओ") || text.contains("चला दो") || text.contains("बजाओ") ||
-            text.contains("बजा दो") || text.contains("लगाओ") || text.contains("सुनाओ") ||
-            text.contains("प्ले करो") || text.contains("प्ले")
+            text.contains("बजा दो") || text.contains("लगाओ") || text.contains("लगा दो") ||
+            text.contains("सुनाओ") || text.contains("प्ले करो") || text.contains("प्ले")
         val isPureOpenYouTube = hasYouTubeWord && !hasMusicWord && !hasPlayVerb &&
             (lower.contains("open") || lower.contains("kholo") || lower.contains("khol") ||
                 text.contains("खोलो") || text.contains("खोल") || text.contains("ओपन"))
 
         if (hasYouTubeWord && !isPureOpenYouTube && (hasMusicWord || hasPlayVerb || text.contains("पर") || lower.contains("par") || lower.contains("on"))) {
             val songQuery = extractYouTubeSongQuery(text)
-            val displaySong = sanitizeForHud(songQuery)
             return ParsedCommand(
                 action = DeviceActionType.PLAY_YOUTUBE,
                 target = songQuery,
-                displayReply = "$assistantName YOUTUBE // Playing on YouTube: $displaySong",
+                displayReply = "$assistantName YOUTUBE // Auto-playing on YouTube (English): $songQuery",
                 spokenReply = if (speakEn) {
-                    "Playing $displaySong on YouTube for you, $userName."
+                    "Playing $songQuery on YouTube for you, $userName."
                 } else {
-                    "जी $userName, यूट्यूब पर $songQuery चलाया जा रहा है।"
+                    "जी $userName, यूट्यूब पर $songQuery चला रही हूँ।"
                 }
             )
         }
@@ -1348,12 +1468,11 @@ class SuaBrain(
                 )
                 else -> {
                     val songQuery = extractYouTubeSongQuery(text)
-                    val displaySong = sanitizeForHud(songQuery)
                     ParsedCommand(
                         action = DeviceActionType.PLAY_YOUTUBE,
                         target = songQuery,
-                        displayReply = "$assistantName YOUTUBE MUSIC // Playing: $displaySong",
-                        spokenReply = if (speakEn) "Playing $displaySong on YouTube, $userName." else "जी $userName, यूट्यूब पर $songQuery चलाया जा रहा है।"
+                        displayReply = "$assistantName YOUTUBE MUSIC // Auto-playing (English): $songQuery",
+                        spokenReply = if (speakEn) "Playing $songQuery on YouTube, $userName." else "जी $userName, यूट्यूब पर $songQuery चला रही हूँ।"
                     )
                 }
             }
@@ -1491,25 +1610,63 @@ class SuaBrain(
     }
 
     private fun extractYouTubeSongQuery(text: String): String {
+        val lower = text.lowercase()
+
+        // 1. Emotion / Mood / Genre detection -> always return clean English title so YouTube never searches Hindi command words!
+        if (lower.contains("sad") || lower.contains("udaas") || lower.contains("udas") ||
+            lower.contains("dukhi") || lower.contains("dard") || lower.contains("breakup") ||
+            text.contains("सैड") || text.contains("उदास") || text.contains("दुखी") || text.contains("दर्द")
+        ) {
+            return "Tum Hi Ho Arijit Singh Sad Song"
+        }
+        if (lower.contains("romantic") || lower.contains("love") || lower.contains("pyar") ||
+            text.contains("रोमांटिक") || text.contains("प्यार") || text.contains("इश्क")
+        ) {
+            return "Kesariya Arijit Singh Romantic Song"
+        }
+        if (lower.contains("bhajan") || lower.contains("bhakti") || lower.contains("hanuman") ||
+            text.contains("भजन") || text.contains("भक्ति") || text.contains("हनुमान")
+        ) {
+            return "Shree Hanuman Chalisa"
+        }
+        if (lower.contains("party") || lower.contains("dance") || lower.contains("dj") ||
+            text.contains("पार्टी") || text.contains("डांस") || text.contains("डीजे")
+        ) {
+            return "Kala Chashma Party Song"
+        }
+        if (lower.contains("old") || lower.contains("purana") || lower.contains("90s") ||
+            text.contains("पुराना") || text.contains("पुराने")
+        ) {
+            return "Lag Ja Gale Old Classic Song"
+        }
+        if (lower.contains("punjabi") || text.contains("पंजाबी")) {
+            return "Lover Diljit Dosanjh Punjabi Song"
+        }
+
+        // 2. Strip all Hindi & Hinglish conversational command/filler words
         var cleaned = text.trim()
         val stripPatterns = listOf(
             Regex("(?i)^(hey\\s+moko|hi\\s+moko|ok\\s+moko|hello\\s+moko|moko|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|मोको)[,\\s]*"),
-            Regex("(?i)\\b(youtube\\s+par|youtube\\s+pe|on\\s+youtube|in\\s+youtube|youtube|you\\s+tube|utube)\\b"),
-            Regex("(यूट्यूब\\s+पर|यूट्यूब\\s+पे|यू\\s+ट्यूब\\s+पर|यूट्यूब|यू\\s+ट्यूब|युटुब|यूटुब)"),
-            Regex("(?i)\\b(play|start|chalao|chala\\s+do|bajao|baja\\s+do|lagao|laga\\s+do|sunao|karo|kar\\s+do|please|jara)\\b"),
-            Regex("(चलाओ|चला\\s+दो|बजाओ|बजा\\s+दो|लगाओ|लगा\\s+दो|सुनाओ|प्ले\\s+करो|प्ले|चालू\\s+करो|चालू|करो|कर\\s+दो|जरा|प्लीज)")
+            Regex("(?i)\\b(youtube\\s+khol\\s+kar|youtube\\s+kholke|youtube\\s+kholo|open\\s+youtube\\s+and|youtube\\s+par|youtube\\s+pe|on\\s+youtube|in\\s+youtube|youtube|you\\s+tube|utube)\\b"),
+            Regex("(यूट्यूब\\s+खोल\\s+कर|यूट्यूब\\s+खोलकर|यूट्यूब\\s+खोलो|यूट्यूब\\s+पर|यूट्यूब\\s+पे|यू\\s+ट्यूब\\s+पर|यूट्यूब|यू\\s+ट्यूब|युटुब|यूटुब|खोल\\s+कर|खोलकर|खोलो)"),
+            Regex("(?i)\\b(ek\\s+achcha\\s+sa|ek\\s+acha\\s+sa|ek\\s+accha\\s+sa|achcha\\s+sa|acha\\s+sa|accha\\s+sa|koi\\s+achcha\\s+sa|koi\\s+badiya\\s+sa|badiya\\s+sa|badhiya\\s+sa|ek|koi|achcha|acha|accha|badiya|badhiya|mast|play|start|chalao|chala\\s+do|bajao|baja\\s+do|lagao|laga\\s+do|sunao|suna\\s+do|karo|kar\\s+do|please|jara|mujhe|mere\\s+liye|thoda|hindi|music|song|songs|gana|gaana|geet|ka|ki|ke|se|sa|si)\\b"),
+            Regex("(एक\\s+अच्छा\\s+सा|अच्छा\\s+सा|कोई\\s+अच्छा\\s+सा|कोई\\s+बढ़िया\\s+सा|बढ़िया\\s+सा|एक|कोई|अच्छा|बढ़िया|मस्त|सा|सी|से|मुझे|मेरे\\s+लिए|थोड़ा|हिंदी|म्यूजिक|गाना|गाने|सॉन्ग|गीत|चलाओ|चला\\s+दो|बजाओ|बजा\\s+दो|लगाओ|लगा\\s+दो|सुनाओ|सुना\\s+दो|प्ले\\s+करो|प्ले|चालू\\s+करो|चालू|करो|कर\\s+दो|जरा|प्लीज|का|की|के)")
         )
         for (p in stripPatterns) {
             cleaned = cleaned.replace(p, " ").trim()
         }
         cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
-        val genericWords = setOf(
-            "", "music", "song", "songs", "gana", "gaana", "कोई गाना", "गाना", "म्यूजिक", "सॉन्ग", "गीत"
-        )
-        return if (cleaned.lowercase() in genericWords || cleaned.length < 2) {
-            "Latest Hindi Hit Songs"
+
+        // 3. Convert any remaining song/singer name to 100% English (Roman script)
+        val englishCleaned = HindiTransliterator.toEnglishQuery(cleaned)
+            .replace(Regex("(?i)\\b(Ek|Achcha|Acha|Accha|Sa|Si|Koi|Badiya|Hindi|Music|Song|Songs|Gana|Gaana|Bajao|Lagao|Chalao|Sunao|Kholo|Khol|Kar)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        return if (englishCleaned.length < 2) {
+            "Kesariya Arijit Singh"
         } else {
-            cleaned
+            englishCleaned
         }
     }
 

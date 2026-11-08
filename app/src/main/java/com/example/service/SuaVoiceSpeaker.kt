@@ -60,6 +60,8 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
     var lastSpokenText: String = ""
         private set
 
+    private val recentSpokenHistory = ArrayDeque<String>(6)
+
     private val selfEchoPhrases = listOf(
         "माफ़ कीजिए",
         "maph kijie",
@@ -68,37 +70,91 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
         "जेमिनी एआई",
         "जी बॉस",
         "ji boss",
-        "नमस्ते",
-        "namaste",
         "मोको ऑनलाइन",
         "moko online",
-        "स्लीप मोड में",
+        "स्लीप मोड में हूँ",
         "एपीआई की मान्य नहीं",
-        "developed by mr. shashank"
+        "developed by mr. shashank",
+        "किया जा रहा है",
+        "कर दिया गया है",
+        "चलाया जा रहा है",
+        "लगाया जा रहा है",
+        "खोली जा रही हैं",
+        "भेजा जा रहा है",
+        "ऑनलाइन हो गई हूँ",
+        "लगातार बात कर सकते हैं",
+        "स्टैंडबाय में चला जाएगा",
+        "मैं आपकी प्यारी"
     )
 
-    fun isInPostSpeechCooldown(cooldownMs: Long = 900L): Boolean {
+    fun isInPostSpeechCooldown(cooldownMs: Long = 1400L): Boolean {
         if (isSpeakingNow) return true
         val elapsed = System.currentTimeMillis() - lastSpeechEndTimeMs
         return lastSpeechEndTimeMs > 0L && elapsed in 0..cooldownMs
     }
 
+    private fun extractComparableTokens(text: String): Set<String> {
+        val roman = com.example.util.HindiTransliterator.toRoman(text)
+            .lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+        return roman.split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .toSet()
+    }
+
     /**
-     * Prevents the microphone from picking up Moko's own speaker output.
+     * Prevents the microphone from picking up Moko's own speaker output while allowing
+     * genuine user mid-sentence interruptions (e.g., "नहीं नहीं प्राइम मिनिस्टर कौन है").
      */
     fun isLikelySelfEcho(recognizedText: String): Boolean {
-        if (isSpeakingNow || isInPostSpeechCooldown(750L)) return true
         val clean = recognizedText.trim().lowercase()
         if (clean.isEmpty()) return false
 
+        // 1. If the user starts with a natural barge-in / correction phrase ("नहीं नहीं...", "अरे...", "साउंड कम करो", "स्टॉप"),
+        // it is NEVER self-echo — let the user interrupt Moko immediately!
+        if (com.example.util.HindiTransliterator.isUserBargeInPhrase(clean)) {
+            return false
+        }
+
+        // 2. Check assistant-only signature phrases that only Moko says
         for (phrase in selfEchoPhrases) {
             if (clean.contains(phrase)) return true
         }
 
-        val recent = lastSpokenText.trim().lowercase()
-        if (recent.length >= 8 && (recent.contains(clean) || clean.contains(recent))) {
+        // 3. Compare word & phonetic overlap against Moko's recent spoken sentences
+        val recTokens = extractComparableTokens(clean)
+        val candidates = synchronized(recentSpokenHistory) {
+            (listOf(lastSpokenText) + recentSpokenHistory).filter { it.isNotBlank() }.distinct()
+        }
+
+        for (spoken in candidates) {
+            val spokenLower = spoken.trim().lowercase()
+            if (spokenLower.length >= 5 && (spokenLower.contains(clean) || clean.contains(spokenLower))) {
+                return true
+            }
+            val spokenTokens = extractComparableTokens(spokenLower)
+            if (recTokens.isNotEmpty() && spokenTokens.isNotEmpty()) {
+                val matchedCount = recTokens.count { rt ->
+                    spokenTokens.any { st ->
+                        st == rt ||
+                            (rt.length >= 4 && st.length >= 4 &&
+                                com.example.util.HindiTransliterator.levenshteinDistance(rt, st) <= 1)
+                    }
+                }
+                val overlapRatio = matchedCount.toFloat() / recTokens.size.toFloat()
+                // If >= 45% of spoken words match what Moko just said (or >= 2 words while actively speaking), it's speaker echo!
+                if (overlapRatio >= 0.45f || (isInPostSpeechCooldown(2400L) && matchedCount >= 2)) {
+                    return true
+                }
+            }
+        }
+
+        // 4. While speaker is actively playing, ignore very short 1-word ambient noise that isn't a barge-in command
+        if (isSpeakingNow && recTokens.size <= 1) {
             return true
         }
+
         return false
     }
 
@@ -194,6 +250,12 @@ object SuaVoiceSpeaker : TextToSpeech.OnInitListener {
         }
 
         lastSpokenText = cleanText
+        synchronized(recentSpokenHistory) {
+            if (recentSpokenHistory.size >= 6) {
+                recentSpokenHistory.removeFirst()
+            }
+            recentSpokenHistory.addLast(cleanText)
+        }
         val ctx = appContext
         if (ctx == null) {
             onComplete?.invoke()

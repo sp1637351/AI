@@ -454,4 +454,128 @@ object HindiTransliterator {
 
         return true
     }
+
+    /**
+     * Fixes common Android SpeechRecognizer misrecognitions in Hindi, Hinglish, and English.
+     */
+    fun normalizeVoiceMistakes(rawInput: String): String {
+        var text = rawInput.trim()
+        if (text.isEmpty()) return ""
+        val replacements = listOf(
+            "एक ट्यूब" to "यूट्यूब",
+            "युटुब" to "यूट्यूब",
+            "यूटुब" to "यूट्यूब",
+            "यू ट्यूब" to "यूट्यूब",
+            "यह ट्यूब" to "यूट्यूब",
+            "वाट्स अप" to "व्हाट्सएप",
+            "व्हाट्स अप" to "व्हाट्सएप",
+            "वाट्सएप" to "व्हाट्सएप",
+            "वॉट्सऐप" to "व्हाट्सएप",
+            "वॉट्सएप" to "व्हाट्सएप",
+            "म्युजिक" to "म्यूजिक",
+            "मुजिक" to "म्यूजिक",
+            "म्यूज़िक" to "म्यूजिक",
+            "राष्टपति" to "राष्ट्रपति",
+            "रास्ट्रपति" to "राष्ट्रपति",
+            "प्राइमिनिस्टर" to "प्राइम मिनिस्टर",
+            "बलूटूथ" to "ब्लूटूथ",
+            "ब्लुटूथ" to "ब्लूटूथ",
+            "फ्लैश लाइट" to "फ्लैशलाइट",
+            "टार्च" to "टॉर्च"
+        )
+        for ((wrong, right) in replacements) {
+            text = text.replace(wrong, right, ignoreCase = true)
+        }
+        return text.replace(Regex("\\s+"), " ").trim()
+    }
+
+    /**
+     * Detects and strips mid-sentence conversational correction prefixes such as
+     * "नहीं नहीं प्राइम मिनिस्टर कौन है", "अरे नहीं...", "no no who is...", returning Pair(wasCorrection, strippedQuery).
+     */
+    fun stripConversationalCorrectionPrefix(rawInput: String): Pair<Boolean, String> {
+        val trimmed = rawInput.trim()
+        if (trimmed.isEmpty()) return Pair(false, "")
+        val correctionRegex = Regex(
+            "^(?i)(?:नहीं\\s+नहीं|नही\\s+नही|अरे\\s+नहीं|अरे\\s+यार|वो\\s+नहीं|मैं\\s+पूछ\\s+रहा\\s+हूँ|मेरा\\s+मतलब|नहीं|नही|रुको\\s+रुको|सुनो\\s+सुनो|no\\s+no|no\\s+wait|not\\s+that|i\\s+mean|wait\\s+no|actually)[,\\s]+(.+)$"
+        )
+        val match = correctionRegex.find(trimmed)
+        return if (match != null) {
+            val remainder = match.groupValues[1].trim()
+            if (remainder.length >= 2) Pair(true, remainder) else Pair(false, trimmed)
+        } else {
+            Pair(false, trimmed)
+        }
+    }
+
+    /**
+     * Returns true if the spoken text starts with a natural barge-in / correction word ("नहीं नहीं", "अरे", "रुको", "no no", etc.).
+     */
+    fun isUserBargeInPhrase(rawInput: String, assistantName: String = "Moko"): Boolean {
+        val trimmed = rawInput.trim()
+        if (trimmed.isEmpty()) return false
+        if (isStopCommand(trimmed, assistantName)) return true
+        val (hasWake, _) = checkAndStripWakeWord(trimmed, assistantName)
+        if (hasWake) return true
+        val (isCorr, _) = stripConversationalCorrectionPrefix(trimmed)
+        if (isCorr) return true
+        val lower = trimmed.lowercase()
+        return Regex("^(?i)(नहीं|नही|अरे|सुनो|रुको|प्राइम|प्रधानमंत्री|राष्ट्रपति|साउंड|आवाज़|आवाज|म्यूजिक|गाना|कॉल|no\\b|wait\\b|hey\\b|volume\\b)").containsMatchIn(lower)
+    }
+
+    /**
+     * Converts any Hindi Devanagari or mixed phrase into 100% clean English (Roman script)
+     * so YouTube, Google Search, Maps, and App Search NEVER receive Devanagari Hindi text.
+     */
+    fun toEnglishQuery(input: String): String {
+        var text = input.trim()
+        if (text.isEmpty()) return ""
+
+        val wordMappings = mapOf(
+            "अरिजीत सिंह" to "Arijit Singh",
+            "अरिजीत" to "Arijit Singh",
+            "केसरिया" to "Kesariya",
+            "तुम ही हो" to "Tum Hi Ho",
+            "चन्ना मेरेया" to "Channa Mereya",
+            "अपना बना ले" to "Apna Bana Le",
+            "हनुमान चालीसा" to "Shree Hanuman Chalisa",
+            "राम सिया राम" to "Ram Siya Ram",
+            "सैड सॉन्ग" to "Hindi Sad Song",
+            "सैड" to "Sad",
+            "उदास" to "Sad",
+            "दुखी" to "Sad Emotional",
+            "दर्द" to "Heartbreak Sad",
+            "रोमांटिक" to "Romantic Love",
+            "प्यार" to "Love Romantic",
+            "पार्टी" to "Party Dance",
+            "डांस" to "Dance Party",
+            "भजन" to "Bhajan Devotional",
+            "भक्ति" to "Bhakti Bhajan",
+            "पुराना" to "Old Classic 90s",
+            "पुराने" to "Old Classic 90s",
+            "पंजाबी" to "Punjabi Hit",
+            "भोजपुरी" to "Bhojpuri Hit",
+            "हिंदी" to "Hindi",
+            "सॉन्ग" to "Song",
+            "गाना" to "Song",
+            "म्यूजिक" to "Music"
+        )
+        for ((hi, en) in wordMappings) {
+            text = text.replace(hi, en, ignoreCase = true)
+        }
+
+        if (text.any { it.code in 0x0900..0x097F }) {
+            text = toRoman(text)
+        }
+
+        return text
+            .replace(Regex("[^a-zA-Z0-9\\s'|\\-]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .split(" ")
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { word ->
+                word.replaceFirstChar { it.uppercase() }
+            }
+    }
 }

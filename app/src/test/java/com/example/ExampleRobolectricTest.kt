@@ -107,6 +107,28 @@ class ExampleRobolectricTest {
         assertNotNull(ytSongCmd)
         assertEquals(DeviceActionType.PLAY_YOUTUBE, ytSongCmd?.action)
 
+        // Verify "यूट्यूब खोलो एक अच्छा सा गाना लगाओ" & "एक अच्छा सा हिंदी म्यूजिक बजाओ" never put Hindi or filler words in YouTube query
+        val ytGoodSongCmd = brain.parseHardwareIntentLocally("यूट्यूब खोलो एक अच्छा सा गाना लगाओ")
+        assertNotNull(ytGoodSongCmd)
+        assertEquals(DeviceActionType.PLAY_YOUTUBE, ytGoodSongCmd?.action)
+        assertEquals("Kesariya Arijit Singh", ytGoodSongCmd?.target)
+
+        val ytGoodHindiMusicCmd = brain.parseHardwareIntentLocally("एक अच्छा सा हिंदी म्यूजिक बजाओ")
+        assertNotNull(ytGoodHindiMusicCmd)
+        assertEquals(DeviceActionType.PLAY_YOUTUBE, ytGoodHindiMusicCmd?.action)
+        assertEquals("Kesariya Arijit Singh", ytGoodHindiMusicCmd?.target)
+
+        // Verify Emotion-Aware Sad Song Selection in 100% English
+        val ytSadSongCmd = brain.parseHardwareIntentLocally("थोड़ा उदास हूँ एक अच्छा सा सैड सॉन्ग लगाओ")
+        assertNotNull(ytSadSongCmd)
+        assertEquals(DeviceActionType.PLAY_YOUTUBE, ytSadSongCmd?.action)
+        assertEquals("Tum Hi Ho Arijit Singh Sad Song", ytSadSongCmd?.target)
+
+        // Verify "म्यूजिक का साउंड कम करो" adjusts volume instead of opening YouTube
+        val musicVolDownCmd = brain.parseHardwareIntentLocally("म्यूजिक का साउंड कम करो")
+        assertNotNull(musicVolDownCmd)
+        assertEquals(DeviceActionType.VOLUME_DOWN, musicVolDownCmd?.action)
+
         // Verify Instant Stop Command ("स्टॉप", "रुको", "Stop")
         val stopCmdHi = brain.parseHardwareIntentLocally("स्टॉप")
         assertNotNull(stopCmdHi)
@@ -115,6 +137,15 @@ class ExampleRobolectricTest {
         val stopCmdEn = brain.parseHardwareIntentLocally("Stop")
         assertNotNull(stopCmdEn)
         assertEquals(DeviceActionType.STOP_ACTION, stopCmdEn?.action)
+
+        // Verify Conversational Context & Mid-Sentence Correction ("भारत का राष्ट्रपति कौन है" -> "नहीं नहीं प्राइम मिनिस्टर कौन है")
+        val presidentReply = brain.parseKnowledgeAndContextLocally("भारत का राष्ट्रपति कौन है")
+        assertNotNull(presidentReply)
+        assertTrue(presidentReply!!.displayReply.contains("Droupadi Murmu"))
+
+        val pmCorrectionReply = brain.parseKnowledgeAndContextLocally("नहीं नहीं प्राइम मिनिस्टर कौन है")
+        assertNotNull(pmCorrectionReply)
+        assertTrue(pmCorrectionReply!!.displayReply.contains("Narendra Modi"))
 
         // Verify WhatsApp Open vs WhatsApp Message
         val openWaCmd = brain.parseHardwareIntentLocally("व्हाट्सएप खोलो")

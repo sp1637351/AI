@@ -302,47 +302,213 @@ class SuaDeviceController(private val context: Context) {
         )
     }
 
+    data class YouTubeSongTarget(
+        val englishTitle: String,
+        val videoId: String
+    )
+
+    private var lastYouTubePickIndex = 0
+
+    private val sadHindiHits = listOf(
+        YouTubeSongTarget("Tum Hi Ho - Aashiqui 2 | Arijit Singh", "Umqb9KENgmk"),
+        YouTubeSongTarget("Channa Mereya - Ae Dil Hai Mushkil | Arijit Singh", "284Ov7ysmfA"),
+        YouTubeSongTarget("Agar Tum Saath Ho - Tamasha | Arijit Singh", "sK7riqg2mr4"),
+        YouTubeSongTarget("Hamari Adhuri Kahani - Title Track | Arijit Singh", "f3FFOBrMmdg"),
+        YouTubeSongTarget("Kabira Encore - Yeh Jawaani Hai Deewani", "jHNNMj5bNQw")
+    )
+
+    private val romanticHindiHits = listOf(
+        YouTubeSongTarget("Kesariya - Brahmastra | Arijit Singh", "BddP6PYo2gs"),
+        YouTubeSongTarget("Apna Bana Le - Bhediya | Arijit Singh", "ElZfdU54Cp8"),
+        YouTubeSongTarget("Chaleya - Jawan | Arijit Singh & Shilpa Rao", "VAdGW7QDJiU"),
+        YouTubeSongTarget("Heeriye - Jasleen Royal & Arijit Singh", "RLzC55ai0eo"),
+        YouTubeSongTarget("Pehle Bhi Main - Animal | Vishal Mishra", "iAIBF2ngbWY"),
+        YouTubeSongTarget("Satranga - Animal | Arijit Singh", "HrnrqYxYrbk")
+    )
+
+    private val partyHindiHits = listOf(
+        YouTubeSongTarget("Kala Chashma - Baar Baar Dekho", "k4yXQkG2s1E"),
+        YouTubeSongTarget("Ghungroo - War | Arijit Singh", "qFkNATtc3mc"),
+        YouTubeSongTarget("Kar Gayi Chull - Kapoor & Sons", "NTHz9ephYTw"),
+        YouTubeSongTarget("Bom Diggy Diggy - Sonu Ke Titu Ki Sweety", "yIIGQB6EMAM")
+    )
+
+    private val devotionalHits = listOf(
+        YouTubeSongTarget("Shree Hanuman Chalisa - Gulshan Kumar | Hariharan", "AETFvQonfV8"),
+        YouTubeSongTarget("Ram Siya Ram - Adipurush | Sachet Tandon", "Tl4bQBfOtbg"),
+        YouTubeSongTarget("Namo Namo - Kedarnath | Amit Trivedi", "dx4Teh-nv3A")
+    )
+
+    private val retroClassicHits = listOf(
+        YouTubeSongTarget("Lag Ja Gale - Lata Mangeshkar Classic", "TFr6G5zveS8"),
+        YouTubeSongTarget("Mere Sapno Ki Rani - Kishore Kumar", "vo1MykK4u8U"),
+        YouTubeSongTarget("Tujhe Dekha To Yeh Jaana Sanam - DDLJ", "cNV5hLSa9H8")
+    )
+
+    private val punjabiHits = listOf(
+        YouTubeSongTarget("Lover - Diljit Dosanjh", "mH_LFkWxpI0"),
+        YouTubeSongTarget("295 - Sidhu Moose Wala", "n_FCrCQ6-bA"),
+        YouTubeSongTarget("Excuses - AP Dhillon", "vX2cDW8LUWk")
+    )
+
+    fun isDeviceMusicCurrentlyActive(): Boolean {
+        return try {
+            audioManager.isMusicActive || SuaStateRepository.isMusicPlaying.value
+        } catch (_: Exception) {
+            SuaStateRepository.isMusicPlaying.value
+        }
+    }
+
+    /**
+     * Resolves a user's spoken song/mood request into a 100% English song title and direct YouTube videoId
+     * so YouTube auto-plays the actual song video instead of pasting Hindi command text in the search bar.
+     */
+    fun resolveYouTubeSongTarget(rawQuery: String): YouTubeSongTarget {
+        val lower = rawQuery.lowercase()
+        val idx = (lastYouTubePickIndex++)
+
+        // 1. Emotion / Mood / Genre detection
+        val isSadMood = lower.contains("sad") || lower.contains("udaas") || lower.contains("udas") ||
+            lower.contains("dukhi") || lower.contains("dard") || lower.contains("breakup") ||
+            lower.contains("heartbreak") || lower.contains("emotional") || lower.contains("alone") ||
+            rawQuery.contains("सैड") || rawQuery.contains("उदास") || rawQuery.contains("दुखी") ||
+            rawQuery.contains("दर्द") || rawQuery.contains("दिल टूट") || rawQuery.contains("गम")
+        if (isSadMood) {
+            return sadHindiHits[idx % sadHindiHits.size]
+        }
+
+        val isDevotional = lower.contains("bhajan") || lower.contains("bhakti") || lower.contains("hanuman") ||
+            lower.contains("ram siya") || lower.contains("shiv") || lower.contains("bholenath") ||
+            rawQuery.contains("भजन") || rawQuery.contains("भक्ति") || rawQuery.contains("हनुमान") ||
+            rawQuery.contains("राम सिया") || rawQuery.contains("भोलेनाथ")
+        if (isDevotional) {
+            return devotionalHits[idx % devotionalHits.size]
+        }
+
+        val isParty = lower.contains("party") || lower.contains("dance") || lower.contains("dj") ||
+            lower.contains("bhangra") || rawQuery.contains("पार्टी") || rawQuery.contains("डांस") || rawQuery.contains("डीजे")
+        if (isParty) {
+            return partyHindiHits[idx % partyHindiHits.size]
+        }
+
+        val isOldClassic = lower.contains("old") || lower.contains("purana") || lower.contains("purane") ||
+            lower.contains("90s") || lower.contains("retro") || lower.contains("kishore") || lower.contains("lata") ||
+            rawQuery.contains("पुराना") || rawQuery.contains("पुराने") || rawQuery.contains("किशोर") || rawQuery.contains("लता")
+        if (isOldClassic) {
+            return retroClassicHits[idx % retroClassicHits.size]
+        }
+
+        val isPunjabi = lower.contains("punjabi") || lower.contains("diljit") || lower.contains("sidhu") ||
+            lower.contains("ap dhillon") || rawQuery.contains("पंजाबी") || rawQuery.contains("दिलजीत") || rawQuery.contains("सिद्धू")
+        if (isPunjabi) {
+            return punjabiHits[idx % punjabiHits.size]
+        }
+
+        val isRomantic = lower.contains("romantic") || lower.contains("love") || lower.contains("pyar") ||
+            lower.contains("pyaar") || lower.contains("ishq") ||
+            rawQuery.contains("रोमांटिक") || rawQuery.contains("प्यार") || rawQuery.contains("इश्क")
+        if (isRomantic) {
+            return romanticHindiHits[idx % romanticHindiHits.size]
+        }
+
+        // 2. Check if it's a generic request like "ek achcha sa hindi music", "achcha sa gana", "latest hindi hit songs", "hindi music"
+        val englishClean = HindiTransliterator.toEnglishQuery(rawQuery)
+        val genericCheck = englishClean.lowercase()
+            .replace(Regex("\\b(ek|achcha|acha|accha|sa|si|se|koi|badiya|badhiya|mast|new|naya|latest|good|best|nice|super|hit|top|hindi|music|song|songs|gana|gaana|geet|play|on|youtube|bajao|lagao|chalao|sunao)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        if (genericCheck.length < 2) {
+            return romanticHindiHits[idx % romanticHindiHits.size]
+        }
+
+        // 3. Check known specific song/artist matches in our fast catalog
+        val specificLower = genericCheck.lowercase()
+        when {
+            specificLower.contains("kesariya") -> return YouTubeSongTarget("Kesariya - Brahmastra | Arijit Singh", "BddP6PYo2gs")
+            specificLower.contains("tum hi ho") -> return YouTubeSongTarget("Tum Hi Ho - Aashiqui 2 | Arijit Singh", "Umqb9KENgmk")
+            specificLower.contains("channa mereya") -> return YouTubeSongTarget("Channa Mereya | Arijit Singh", "284Ov7ysmfA")
+            specificLower.contains("apna bana le") -> return YouTubeSongTarget("Apna Bana Le | Arijit Singh", "ElZfdU54Cp8")
+            specificLower.contains("chaleya") -> return YouTubeSongTarget("Chaleya - Jawan | Arijit Singh", "VAdGW7QDJiU")
+            specificLower.contains("heeriye") -> return YouTubeSongTarget("Heeriye | Arijit Singh", "RLzC55ai0eo")
+            specificLower.contains("pehle bhi main") -> return YouTubeSongTarget("Pehle Bhi Main - Animal", "iAIBF2ngbWY")
+            specificLower.contains("satranga") -> return YouTubeSongTarget("Satranga - Animal | Arijit Singh", "HrnrqYxYrbk")
+            specificLower.contains("arijit") -> return romanticHindiHits[idx % romanticHindiHits.size]
+        }
+
+        // 4. For any other specific song/artist, ensure 100% English title and try to resolve live YouTube videoId
+        val finalEnglishQuery = if (genericCheck.isNotBlank()) {
+            genericCheck.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } } + " Official Song"
+        } else {
+            englishClean.ifBlank { "Kesariya Arijit Singh Official Song" }
+        }
+        val liveVideoId = fetchLiveYouTubeVideoId(finalEnglishQuery)
+        return YouTubeSongTarget(
+            englishTitle = finalEnglishQuery,
+            videoId = liveVideoId
+        )
+    }
+
+    private fun fetchLiveYouTubeVideoId(englishSearchQuery: String): String {
+        return try {
+            val url = java.net.URL("https://www.youtube.com/results?search_query=${Uri.encode(englishSearchQuery)}")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 2400
+                readTimeout = 2400
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                )
+            }
+            val html = conn.inputStream.bufferedReader().use { it.readText() }
+            val match = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html)
+            match?.groupValues?.getOrNull(1).orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     fun playYouTubeMusic(
         rawQuery: String,
         customDisplay: String = "",
         customSpoken: String = ""
     ): ActionExecutionResult {
         val userName = prefs.getUserName()
-        val searchQuery = rawQuery.trim().ifEmpty { "Latest Hindi Hit Songs" }
         val pm = appContext.packageManager
+        val resolvedTarget = resolveYouTubeSongTarget(rawQuery)
+        val englishTitle = resolvedTarget.englishTitle
+        val videoId = resolvedTarget.videoId
         SuaStateRepository.updateMusicPlaying(true)
 
-        // 1. Try direct voice media play intent on YouTube Music or YouTube app
-        val mediaPlayPackages = listOf(
-            "com.google.android.apps.youtube.music",
-            "com.google.android.youtube"
-        )
-        for (pkg in mediaPlayPackages) {
+        // 1. If we have a resolved YouTube videoId, launch the direct watch?v=VIDEO_ID deep link so YouTube AUTO-PLAYS the video immediately!
+        if (videoId.isNotEmpty()) {
             try {
-                if (pm.getLaunchIntentForPackage(pkg) != null) {
-                    val playFromSearchIntent = Intent(android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
-                        setPackage(pkg)
-                        putExtra(android.provider.MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-                        putExtra(android.app.SearchManager.QUERY, searchQuery)
+                val watchUri = Uri.parse("https://www.youtube.com/watch?v=$videoId")
+                val watchIntent = Intent(Intent.ACTION_VIEW, watchUri).apply {
+                    putExtra("force_fullscreen", false)
+                    putExtra("finish_on_ended", false)
+                    if (pm.getLaunchIntentForPackage("com.google.android.youtube") != null) {
+                        setPackage("com.google.android.youtube")
                     }
-                    launchActivityWithBackgroundSupport(
-                        playFromSearchIntent,
-                        "Playing on YouTube: $searchQuery",
-                        "Tap to play $searchQuery on YouTube"
-                    )
-                    return ActionExecutionResult(
-                        success = true,
-                        displayReply = customDisplay.ifBlank { "YOUTUBE MUSIC // Playing \"$searchQuery\" on YouTube." },
-                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, यूट्यूब पर $searchQuery चलाया जा रहा है।" }
-                    )
                 }
+                launchActivityWithBackgroundSupport(
+                    watchIntent,
+                    "Playing on YouTube: $englishTitle",
+                    "Auto-playing $englishTitle on YouTube"
+                )
+                return ActionExecutionResult(
+                    success = true,
+                    displayReply = customDisplay.ifBlank { "YOUTUBE AUTO-PLAY // Playing \"$englishTitle\" on YouTube." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, यूट्यूब पर $englishTitle चला रही हूँ।" }
+                )
             } catch (_: Exception) {
             }
         }
 
-        // 2. Try YouTube Search Intent or vnd.youtube URI
+        // 2. Fallback: Open YouTube in 100% English (never Hindi Devanagari)
         try {
-            val ytUrl = "https://www.youtube.com/results?search_query=${Uri.encode(searchQuery)}"
+            val ytUrl = "https://www.youtube.com/results?search_query=${Uri.encode(englishTitle)}"
             val ytIntent = Intent(Intent.ACTION_VIEW, Uri.parse(ytUrl)).apply {
                 if (pm.getLaunchIntentForPackage("com.google.android.youtube") != null) {
                     setPackage("com.google.android.youtube")
@@ -350,18 +516,18 @@ class SuaDeviceController(private val context: Context) {
             }
             launchActivityWithBackgroundSupport(
                 ytIntent,
-                "YouTube: $searchQuery",
-                "Tap to play $searchQuery on YouTube"
+                "YouTube: $englishTitle",
+                "Playing $englishTitle on YouTube"
             )
             return ActionExecutionResult(
                 success = true,
-                displayReply = customDisplay.ifBlank { "YOUTUBE PLAY // Opened YouTube for \"$searchQuery\"." },
-                finalSpokenReply = customSpoken.ifBlank { "जी $userName, यूट्यूब पर $searchQuery चलाया जा रहा है।" }
+                displayReply = customDisplay.ifBlank { "YOUTUBE PLAY // Playing \"$englishTitle\" on YouTube." },
+                finalSpokenReply = customSpoken.ifBlank { "जी $userName, यूट्यूब पर $englishTitle चला रही हूँ।" }
             )
         } catch (e: Exception) {
             return ActionExecutionResult(
                 success = false,
-                displayReply = "YOUTUBE ERROR // Could not play $searchQuery: ${e.localizedMessage}",
+                displayReply = "YOUTUBE ERROR // Could not play $englishTitle: ${e.localizedMessage}",
                 finalSpokenReply = "माफ़ कीजिए $userName, यूट्यूब चलाने में समस्या आई है।"
             )
         }
