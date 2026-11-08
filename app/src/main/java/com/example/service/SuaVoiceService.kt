@@ -59,8 +59,20 @@ class SuaVoiceService : Service() {
         }
 
         fun startServiceInMode(context: Context, mode: MokoOperatingMode) {
+            val prefs = SuaPreferences(context)
+            prefs.setSavedOperatingMode(mode)
             if (mode == MokoOperatingMode.OFFLINE) {
                 stopService(context)
+                return
+            }
+
+            if (!prefs.hasAcceptedVoicePrivacyConsent()) {
+                SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
+                SuaStateRepository.updateStatus(SuaStatus.IDLE)
+                SuaStateRepository.updateServiceError(
+                    "VOICE PRIVACY CONSENT REQUIRED // Please review and accept the Voice & Cloud Privacy Notice before activating ${mode.label} microphone listening."
+                )
+                SuaStateRepository.triggerUiNavigationAction("SHOW_PRIVACY_CONSENT")
                 return
             }
 
@@ -72,12 +84,16 @@ class SuaVoiceService : Service() {
             if (!hasMic) {
                 SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
                 SuaStateRepository.updateStatus(SuaStatus.ERROR)
+                SuaStateRepository.updateServiceError(
+                    "MIC PERMISSION REQUIRED // Grant Microphone permission before starting ${mode.label} mode."
+                )
                 SuaStateRepository.updateLiveTranscript("MIC PERMISSION REQUIRED // Grant Microphone access")
                 SuaStateRepository.updateLastReply("PERMISSION ERROR // Microphone permission is required before starting ${mode.label} mode.")
                 SuaVoiceSpeaker.speak("माफ़ कीजिए बॉस, माइक परमिशन के बिना मोको ${mode.label} मोड चालू नहीं हो सकता।")
                 return
             }
 
+            SuaStateRepository.updateServiceError(null)
             val intent = Intent(context, SuaVoiceService::class.java).apply {
                 action = if (mode == MokoOperatingMode.SLEEP) {
                     ACTION_START_SLEEP_MODE
@@ -91,15 +107,24 @@ class SuaVoiceService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 try {
                     context.startService(intent)
-                } catch (_: Exception) {
+                } catch (e2: Exception) {
+                    SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
+                    SuaStateRepository.updateStatus(SuaStatus.ERROR)
+                    SuaStateRepository.updateServiceError(
+                        "BACKGROUND SERVICE BLOCKED // Android blocked foreground mic startup (${e2.localizedMessage ?: e.localizedMessage ?: "Background restriction"}). Open the app and tap ONLINE to start."
+                    )
                 }
             }
         }
 
         fun stopService(context: Context) {
+            try {
+                SuaPreferences(context).setSavedOperatingMode(MokoOperatingMode.OFFLINE)
+            } catch (_: Exception) {
+            }
             val intent = Intent(context, SuaVoiceService::class.java).apply {
                 action = ACTION_STOP_SERVICE
             }
@@ -108,6 +133,7 @@ class SuaVoiceService : Service() {
             } catch (_: Exception) {
             }
             SuaVoiceSpeaker.stopSpeaking()
+            SuaStateRepository.updateServiceError(null)
             SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
             SuaStateRepository.updateStatus(SuaStatus.IDLE)
             SuaStateRepository.updateLiveTranscript("OFFLINE MODE // Background voice service & microphone are completely OFF.")
@@ -366,9 +392,14 @@ class SuaVoiceService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        } catch (_: Exception) {
+            SuaStateRepository.updateServiceError(null)
+        } catch (e: Exception) {
             shouldKeepListening = false
             SuaStateRepository.setOperatingMode(MokoOperatingMode.OFFLINE)
+            SuaStateRepository.updateStatus(SuaStatus.ERROR)
+            SuaStateRepository.updateServiceError(
+                "FOREGROUND MIC SERVICE FAILED // ${e.localizedMessage ?: "OS blocked background microphone"}. Open the app and tap ONLINE to restart."
+            )
             stopSelf()
         }
     }

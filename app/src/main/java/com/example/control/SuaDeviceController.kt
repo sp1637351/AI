@@ -2,6 +2,7 @@ package com.example.control
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -25,11 +26,11 @@ import android.os.SystemClock
 import android.provider.AlarmClock
 import android.provider.ContactsContract
 import android.provider.Settings
-import android.telephony.SmsManager
 import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.admin.SuaDeviceAdminReceiver
+import com.example.ai.SuaBrain
 import com.example.data.DeviceActionType
 import com.example.data.MokoOperatingMode
 import com.example.data.ParsedCommand
@@ -37,6 +38,8 @@ import com.example.data.PermissionStatusItem
 import com.example.data.QuickContact
 import com.example.data.SuaPreferences
 import com.example.data.SuaStateRepository
+import com.example.service.MokoAccessibilityService
+import com.example.service.ScreenCaptureManager
 import com.example.util.HindiTransliterator
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -99,9 +102,7 @@ class SuaDeviceController(private val context: Context) {
         val list = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.CALL_PHONE,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.CAMERA
+            Manifest.permission.READ_CONTACTS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             list.add(Manifest.permission.BLUETOOTH_CONNECT)
@@ -144,6 +145,10 @@ class SuaDeviceController(private val context: Context) {
         }
     }
 
+    fun isAccessibilityVoiceClickEnabled(): Boolean {
+        return MokoAccessibilityService.isServiceEnabled()
+    }
+
     fun getPermissionStatusList(): List<PermissionStatusItem> {
         val items = mutableListOf(
             PermissionStatusItem(
@@ -155,7 +160,7 @@ class SuaDeviceController(private val context: Context) {
             PermissionStatusItem(
                 id = Manifest.permission.CALL_PHONE,
                 title = "Direct Telephony Control",
-                subtitle = "Places instant outgoing voice calls without manual dialer tap",
+                subtitle = "Places outgoing voice calls when requested by voice",
                 isGranted = hasPermission(Manifest.permission.CALL_PHONE)
             ),
             PermissionStatusItem(
@@ -163,18 +168,6 @@ class SuaDeviceController(private val context: Context) {
                 title = "Contacts Directory Sync",
                 subtitle = "Matches Hindi & English spoken names from your phonebook",
                 isGranted = hasPermission(Manifest.permission.READ_CONTACTS)
-            ),
-            PermissionStatusItem(
-                id = Manifest.permission.SEND_SMS,
-                title = "Automated SMS Dispatch",
-                subtitle = "Sends SMS text messages directly via SmsManager",
-                isGranted = hasPermission(Manifest.permission.SEND_SMS)
-            ),
-            PermissionStatusItem(
-                id = Manifest.permission.CAMERA,
-                title = "Optics & Torch Hardware",
-                subtitle = "Controls rear LED flashlight module ON and OFF",
-                isGranted = hasPermission(Manifest.permission.CAMERA)
             )
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -187,6 +180,15 @@ class SuaDeviceController(private val context: Context) {
                 )
             )
         }
+        items.add(
+            PermissionStatusItem(
+                id = "ACCESSIBILITY_SERVICE",
+                title = "Accessibility Voice Click & Screen Reader",
+                subtitle = "Required to click buttons and read text across external apps",
+                isGranted = isAccessibilityVoiceClickEnabled(),
+                isSpecialSystemPermission = true
+            )
+        )
         items.add(
             PermissionStatusItem(
                 id = "WRITE_SETTINGS",
@@ -202,15 +204,6 @@ class SuaDeviceController(private val context: Context) {
                 title = "Device Admin Screen Lock",
                 subtitle = "Required to physically lock the phone on 'Lock Phone' command",
                 isGranted = isDeviceAdminActive(),
-                isSpecialSystemPermission = true
-            )
-        )
-        items.add(
-            PermissionStatusItem(
-                id = "BATTERY_OPT",
-                title = "Unrestricted Background Battery",
-                subtitle = "Prevents Android from killing Moko while running in background",
-                isGranted = isIgnoringBatteryOptimizations(),
                 isSpecialSystemPermission = true
             )
         )
@@ -1100,59 +1093,31 @@ class SuaDeviceController(private val context: Context) {
             )
         }
 
-        return if (hasPermission(Manifest.permission.SEND_SMS)) {
-            try {
-                val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    appContext.getSystemService(SmsManager::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    SmsManager.getDefault()
-                }
-                if (smsManager == null) {
-                    return ActionExecutionResult(
-                        success = false,
-                        displayReply = "SMS ERROR // SmsManager unavailable on this device.",
-                        finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, इस डिवाइस पर एसएमएस सर्विस उपलब्ध नहीं है।"
-                    )
-                }
-                smsManager.sendTextMessage(numberToText, null, finalMsg, null, null)
-                val disp = customDisplay.ifBlank {
-                    "SMS SENT // Dispatched to $displayName ($numberToText): \"$finalMsg\""
-                }
-                val spoken = customSpoken.ifBlank {
-                    "जी ${prefs.getUserName()}, $displayName को मैसेज भेज दिया गया है।"
-                }
-                ActionExecutionResult(true, disp, spoken)
-            } catch (e: Exception) {
-                ActionExecutionResult(
-                    success = false,
-                    displayReply = "SMS FAILED // Could not send SMS to $displayName: ${e.localizedMessage ?: "Telephony error"}",
-                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, $displayName को मैसेज भेजने में एरर आ गया है।"
-                )
+        return try {
+            val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
+                data = Uri.parse("smsto:$numberToText")
+                putExtra("sms_body", finalMsg)
             }
-        } else {
-            try {
-                val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
-                    data = Uri.parse("smsto:$numberToText")
-                    putExtra("sms_body", finalMsg)
+            launchActivityWithBackgroundSupport(
+                smsIntent,
+                "Send SMS to $displayName",
+                "Tap to open SMS composer for $displayName"
+            )
+            ActionExecutionResult(
+                success = true,
+                displayReply = customDisplay.ifBlank {
+                    "SMS COMPOSER OPENED // Opened SMS app for $displayName ($numberToText): \"$finalMsg\""
+                },
+                finalSpokenReply = customSpoken.ifBlank {
+                    "जी ${prefs.getUserName()}, मैंने $displayName के लिए मैसेज ऐप में आपका संदेश तैयार कर दिया है।"
                 }
-                launchActivityWithBackgroundSupport(
-                    smsIntent,
-                    "Send SMS to $displayName",
-                    "Tap to open SMS composer for $displayName"
-                )
-                ActionExecutionResult(
-                    success = true,
-                    displayReply = "SMS COMPOSER OPENED // Opened SMS app for $displayName ($numberToText).",
-                    finalSpokenReply = "जी ${prefs.getUserName()}, मैंने $displayName के लिए मैसेज ऐप खोल दिया है।"
-                )
-            } catch (e: Exception) {
-                ActionExecutionResult(
-                    success = false,
-                    displayReply = "SMS ERROR // ${e.localizedMessage}",
-                    finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, मैसेज ऐप नहीं खुल सका।"
-                )
-            }
+            )
+        } catch (e: Exception) {
+            ActionExecutionResult(
+                success = false,
+                displayReply = "SMS ERROR // ${e.localizedMessage}",
+                finalSpokenReply = "माफ़ कीजिए ${prefs.getUserName()}, मैसेज ऐप नहीं खुल सका।"
+            )
         }
     }
 
@@ -1609,7 +1574,13 @@ class SuaDeviceController(private val context: Context) {
         customSpoken: String = ""
     ): ActionExecutionResult {
         val userName = prefs.getUserName()
+        val wasOverlayActive = SuaStateRepository.isScreenLockedOverlay.value
         SuaStateRepository.setScreenLockedOverlay(false)
+
+        val keyguardManager = appContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val isDeviceKeyguardLocked = keyguardManager?.isKeyguardLocked == true
+
+        // Wake the display if it is off
         try {
             val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wl = pm?.newWakeLock(
@@ -1618,24 +1589,44 @@ class SuaDeviceController(private val context: Context) {
                     PowerManager.ON_AFTER_RELEASE,
                 "Moko:VoiceUnlockWakeLock"
             )
-            wl?.acquire(5000L)
+            wl?.acquire(4000L)
         } catch (_: Exception) {
         }
-        try {
-            val openAppIntent = Intent(appContext, com.example.MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+        if (isDeviceKeyguardLocked) {
+            // Do NOT pretend the OS lockscreen was bypassed! Trigger KeyguardManager Biometric/PIN prompt in MainActivity.
+            try {
+                val openAppIntent = Intent(appContext, com.example.MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    putExtra("request_biometric_unlock", true)
+                }
+                launchActivityWithBackgroundSupport(
+                    openAppIntent,
+                    "Moko // Biometric / PIN Unlock",
+                    "Authenticate with Fingerprint or PIN to unlock"
+                )
+            } catch (_: Exception) {
             }
-            launchActivityWithBackgroundSupport(
-                openAppIntent,
-                "Moko // Screen Unlocked",
-                "Screen unlocked by voice"
+            SuaStateRepository.triggerUiNavigationAction("REQUEST_BIOMETRIC_KEYGUARD_DISMISS")
+            return ActionExecutionResult(
+                success = true,
+                displayReply = "BIOMETRIC / PIN UNLOCK PROMPT // Woke screen & requested Android Biometric/PIN authentication (OS security cannot be bypassed without authentication).",
+                finalSpokenReply = "जी $userName, मैंने स्क्रीन ऑन कर दी है। सुरक्षा के लिए कृपया अपना फिंगरप्रिंट या पिन लगाकर फोन अनलॉक करें।"
             )
-        } catch (_: Exception) {
         }
+
+        if (wasOverlayActive) {
+            return ActionExecutionResult(
+                success = true,
+                displayReply = customDisplay.ifBlank { "IN-APP OVERLAY UNLOCKED // In-app lock overlay dismissed." },
+                finalSpokenReply = customSpoken.ifBlank { "जी $userName, इन-ऐप स्क्रीन ओवरले हटा दिया गया है।" }
+            )
+        }
+
         return ActionExecutionResult(
             success = true,
-            displayReply = customDisplay.ifBlank { "SCREEN UNLOCKED // Security lock overlay dismissed & display awakened." },
-            finalSpokenReply = customSpoken.ifBlank { "जी $userName, मैंने आपका लॉक खोल दिया है और स्क्रीन अनलॉक कर दी है।" }
+            displayReply = customDisplay.ifBlank { "DEVICE ALREADY UNLOCKED // Phone screen is already unlocked." },
+            finalSpokenReply = customSpoken.ifBlank { "जी $userName, आपके फोन की स्क्रीन पहले से अनलॉक है।" }
         )
     }
 
@@ -1647,18 +1638,51 @@ class SuaDeviceController(private val context: Context) {
         val upper = targetModeOrQuery.trim().uppercase()
         val userName = prefs.getUserName()
         if (upper == "OFF" || upper == "STOP") {
+            ScreenCaptureManager.stopMediaProjection()
             SuaStateRepository.setScreenShareActive(false)
             return ActionExecutionResult(
                 success = true,
-                displayReply = customDisplay.ifBlank { "SCREEN SHARE OFF // Live screen analysis stopped." },
+                displayReply = customDisplay.ifBlank { "SCREEN SHARE OFF // Live screen capture & analysis stopped." },
                 finalSpokenReply = customSpoken.ifBlank { "जी $userName, स्क्रीन शेयर बंद कर दिया गया है।" }
             )
         }
 
         SuaStateRepository.setScreenShareActive(true)
+        if (!ScreenCaptureManager.hasMediaProjectionConsent()) {
+            // Request explicit user consent for MediaProjection screen capture
+            SuaStateRepository.triggerUiNavigationAction("REQUEST_MEDIA_PROJECTION")
+        }
+
         val battery = getBatteryPercentage()
-        val screenSummaryEn = SuaStateRepository.buildCurrentScreenSnapshotSummary(prefs, battery)
-        val screenSummaryHi = SuaStateRepository.buildCurrentScreenSpokenSummaryHi(prefs, battery)
+        val windowTextSummary = MokoAccessibilityService.instance?.readActiveScreenTextSummary().orEmpty()
+        val base64Jpeg = ScreenCaptureManager.captureScreenBase64Jpeg()
+
+        // If Gemini API key is configured and we have a captured screen frame or Accessibility window nodes, run Gemini Vision!
+        if (prefs.getEffectiveApiKey().isNotBlank() && (base64Jpeg.isNotBlank() || windowTextSummary.isNotBlank())) {
+            val visionResult = SuaBrain(prefs, this).analyzeScreenBitmapWithVision(
+                base64Jpeg = base64Jpeg,
+                windowTextSummary = windowTextSummary,
+                userQuestion = targetModeOrQuery
+            )
+            if (visionResult != null) {
+                return ActionExecutionResult(
+                    success = true,
+                    displayReply = visionResult.displayReply,
+                    finalSpokenReply = visionResult.spokenReply
+                )
+            }
+        }
+
+        val screenSummaryEn = SuaStateRepository.buildCurrentScreenSnapshotSummary(
+            prefs = prefs,
+            batteryPct = battery,
+            activeWindowSummary = windowTextSummary
+        )
+        val screenSummaryHi = SuaStateRepository.buildCurrentScreenSpokenSummaryHi(
+            prefs = prefs,
+            batteryPct = battery,
+            hasVisionCapture = base64Jpeg.isNotBlank() || windowTextSummary.isNotBlank()
+        )
 
         return ActionExecutionResult(
             success = true,
@@ -1676,71 +1700,92 @@ class SuaDeviceController(private val context: Context) {
         val lower = raw.lowercase()
         val userName = prefs.getUserName()
 
-        return when {
+        // 1. In-App Navigation Shortcuts
+        when {
             lower.contains("setting") || lower.contains("history") || lower.contains("सेटिंग") || lower.contains("हिस्ट्री") -> {
                 SuaStateRepository.triggerUiNavigationAction("OPEN_SETTINGS")
-                ActionExecutionResult(
+                return ActionExecutionResult(
                     success = true,
-                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Clicked 'Settings & History' button." },
-                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, सेटिंग्स और हिस्ट्री पर क्लिक कर दिया गया है।" }
+                    displayReply = customDisplay.ifBlank { "IN-APP VOICE NAV // Opened 'Settings & History' screen." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, सेटिंग्स और हिस्ट्री स्क्रीन खोल दी गई है।" }
                 )
             }
             lower.contains("menu") || lower.contains("drawer") || lower.contains("मेन्यू") -> {
                 SuaStateRepository.triggerUiNavigationAction("OPEN_DRAWER")
-                ActionExecutionResult(
+                return ActionExecutionResult(
                     success = true,
-                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Opened Side Menu Drawer." },
+                    displayReply = customDisplay.ifBlank { "IN-APP VOICE NAV // Opened Side Menu Drawer." },
                     finalSpokenReply = customSpoken.ifBlank { "जी $userName, साइड मेन्यू खोल दिया गया है।" }
                 )
             }
             lower.contains("close") || lower.contains("back") || lower.contains("बंद") || lower.contains("बैक") -> {
                 SuaStateRepository.triggerUiNavigationAction("CLOSE_DRAWER")
-                ActionExecutionResult(
+                return ActionExecutionResult(
                     success = true,
-                    displayReply = customDisplay.ifBlank { "VOICE CLICK // Closed menu / navigated back." },
+                    displayReply = customDisplay.ifBlank { "IN-APP VOICE NAV // Closed menu / navigated back." },
                     finalSpokenReply = customSpoken.ifBlank { "जी $userName, इसे बंद कर दिया गया है।" }
                 )
             }
             lower.contains("screen share") || lower.contains("share") || lower.contains("स्क्रीन शेयर") -> {
-                analyzeSharedScreen("ON", customDisplay, customSpoken)
+                return analyzeSharedScreen("ON", customDisplay, customSpoken)
             }
             lower.contains("unlock") || lower.contains("अनलॉक") || lower.contains("लॉक खोल") -> {
-                unlockPhoneScreen(customDisplay, customSpoken)
+                return unlockPhoneScreen(customDisplay, customSpoken)
             }
             lower.contains("lock") || lower.contains("लॉक") -> {
-                lockPhoneScreen(customDisplay, customSpoken)
+                return lockPhoneScreen(customDisplay, customSpoken)
             }
             lower.contains("torch") || lower.contains("flashlight") || lower.contains("टॉर्च") || lower.contains("फ्लैशलाइट") -> {
                 val next = !SuaStateRepository.isFlashlightOn.value
-                setFlashlight(next, customDisplay, customSpoken)
+                return setFlashlight(next, customDisplay, customSpoken)
             }
             lower.contains("online") || lower.contains("ऑनलाइन") -> {
-                executeModeSwitch("ONLINE", customDisplay, customSpoken)
+                return executeModeSwitch("ONLINE", customDisplay, customSpoken)
             }
             lower.contains("sleep") || lower.contains("स्लीप") -> {
-                executeModeSwitch("SLEEP", customDisplay, customSpoken)
+                return executeModeSwitch("SLEEP", customDisplay, customSpoken)
             }
             lower.contains("offline") || lower.contains("ऑफलाइन") -> {
-                executeModeSwitch("OFFLINE", customDisplay, customSpoken)
+                return executeModeSwitch("OFFLINE", customDisplay, customSpoken)
             }
-            else -> {
-                // If user said "Click <AppName>" (e.g., "Click WhatsApp"), launch that app or setting
-                val appRes = openInstalledApp(raw, "", "")
-                if (appRes.success) {
-                    ActionExecutionResult(
-                        success = true,
-                        displayReply = customDisplay.ifBlank { "VOICE CLICK // Clicked & opened '$raw'." },
-                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, '$raw' पर क्लिक करके खोल दिया गया है।" }
-                    )
-                } else {
-                    SuaStateRepository.markWakeWordDetected()
-                    ActionExecutionResult(
-                        success = true,
-                        displayReply = customDisplay.ifBlank { "VOICE CLICK // Activated '$raw' on screen." },
-                        finalSpokenReply = customSpoken.ifBlank { "जी $userName, स्क्रीन पर '$raw' को क्लिक कर दिया गया है।" }
-                    )
-                }
+        }
+
+        // 2. Real System-Wide UI Click via MokoAccessibilityService
+        val a11yService = MokoAccessibilityService.instance
+        if (a11yService != null) {
+            val clicked = a11yService.findAndClickNodeByText(raw)
+            if (clicked) {
+                return ActionExecutionResult(
+                    success = true,
+                    displayReply = customDisplay.ifBlank { "ACCESSIBILITY VOICE CLICK // Clicked '$raw' on screen." },
+                    finalSpokenReply = customSpoken.ifBlank { "जी $userName, स्क्रीन पर '$raw' बटन पर क्लिक कर दिया गया है।" }
+                )
             }
+        }
+
+        // 3. Check if the user named an installed app ("Click WhatsApp" -> open WhatsApp)
+        val appRes = openInstalledApp(raw, "", "")
+        if (appRes.success) {
+            return ActionExecutionResult(
+                success = true,
+                displayReply = customDisplay.ifBlank { "APP LAUNCH // Opened '$raw'." },
+                finalSpokenReply = customSpoken.ifBlank { "जी $userName, '$raw' ऐप खोल दिया गया है।" }
+            )
+        }
+
+        // 4. Honest feedback when AccessibilityService is OFF or target element is not on screen
+        return if (a11yService == null) {
+            ActionExecutionResult(
+                success = false,
+                displayReply = "ACCESSIBILITY REQUIRED // To click '$raw' on any screen, enable 'Moko' in Android Accessibility Settings (Settings -> Accessibility).",
+                finalSpokenReply = "जी $userName, स्क्रीन के किसी भी बटन पर वॉइस क्लिक करने के लिए कृपया सेटिंग्स में जाकर मोको एक्सेसिबिलिटी सर्विस चालू करें।"
+            )
+        } else {
+            ActionExecutionResult(
+                success = false,
+                displayReply = "ELEMENT NOT FOUND // Could not find clickable button '$raw' on the current screen.",
+                finalSpokenReply = "माफ़ कीजिए $userName, अभी स्क्रीन पर '$raw' नाम का कोई बटन नहीं दिखा।"
+            )
         }
     }
 

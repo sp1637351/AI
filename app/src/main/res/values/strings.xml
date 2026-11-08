@@ -12,4 +12,5 @@
     <string name="delete_api_key">DELETE KEY</string>
     <string name="background_mode_active">MOKO ONLINE // SAY HI MOKO</string>
     <string name="background_mode_inactive">SLEEP MODE // BACKGROUND OFF</string>
+    <string name="accessibility_service_description">Allows Moko Voice Assistant to click on-screen buttons and read visible screen elements when you give a voice click or screen analysis command.</string>
 </resources>

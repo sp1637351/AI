@@ -1,13 +1,16 @@
-name: Build Moko Android APK
+name: Build, Test & Lint Moko Android APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - '*'
+  pull_request:
+    branches:
+      - '*'
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -45,10 +48,16 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Latest Moko Debug APK
+      - name: Run Unit & Robolectric Tests
+        run: gradle :app:testDebugUnitTest --no-daemon
+
+      - name: Run Android Lint Check
+        run: gradle :app:lintDebug --no-daemon
+
+      - name: Build Moko Debug APK
         run: gradle assembleDebug --no-daemon
 
-      - name: Upload Moko APK
+      - name: Upload Moko Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: Moko-Debug-APK

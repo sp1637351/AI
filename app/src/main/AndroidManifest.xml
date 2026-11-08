@@ -2,30 +2,32 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network for Gemini AI API -->
+    <!-- 1. Network Connectivity: Required for Gemini/OpenAI/Claude AI Q&A, Kalpa Labs TTS, and YouTube song resolution -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Voice Recognition & Background Service -->
+    <!-- 2. Voice Assistant & Foreground Microphone Service: Required to listen for "Hi Moko" and voice commands -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Device Control: Calls, Contacts, SMS, Flashlight, Brightness, Audio, Vibrate, Alarms -->
+    <!-- 3. Telephony & Contacts: Required only when the user asks Moko to call or message a saved contact by name -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.FLASHLIGHT" />
+
+    <!-- 4. Hardware Controls: Audio volume/ringer, vibration, alarms, Bluetooth, Wi-Fi state, and system brightness -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
@@ -37,9 +39,6 @@
         android:name="android.hardware.telephony"
         android:required="false" />
     <uses-feature
-        android:name="android.hardware.camera"
-        android:required="false" />
-    <uses-feature
         android:name="android.hardware.camera.flash"
         android:required="false" />
     <uses-feature
@@ -47,7 +46,7 @@
         android:required="false" />
 
     <queries>
-        <!-- Allow discovering and launching any installed app by voice -->
+        <!-- Allow discovering and launching installed apps by voice -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -100,7 +99,7 @@
     </queries>
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -114,6 +113,8 @@
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:theme="@style/Theme.MyApplication"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -128,6 +129,32 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Accessibility Service for Real On-Screen Voice Click & Window Text Inspection -->
+        <service
+            android:name=".service.MokoAccessibilityService"
+            android:enabled="true"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/moko_accessibility_service" />
+        </service>
+
+        <!-- Boot Receiver to restore or notify Moko Voice Assistant after device restart -->
+        <receiver
+            android:name=".service.MokoBootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Device Admin Receiver for "Lock Phone" command -->
         <receiver

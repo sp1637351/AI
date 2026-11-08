@@ -66,6 +66,9 @@ object SuaStateRepository {
     private val _pendingComms = MutableStateFlow<PendingCommsConfirmation?>(null)
     val pendingComms: StateFlow<PendingCommsConfirmation?> = _pendingComms.asStateFlow()
 
+    private val _serviceErrorMessage = MutableStateFlow<String?>(null)
+    val serviceErrorMessage: StateFlow<String?> = _serviceErrorMessage.asStateFlow()
+
     @Volatile
     var lastResolvedContactName: String = ""
 
@@ -75,6 +78,10 @@ object SuaStateRepository {
     @Volatile
     var lastWakeSessionTimestampMs: Long = 0L
 
+    fun updateServiceError(errorMsg: String?) {
+        _serviceErrorMessage.value = errorMsg
+    }
+
     fun setScreenShareActive(active: Boolean) {
         _isScreenShareActive.value = active
     }
@@ -83,13 +90,17 @@ object SuaStateRepository {
         _pendingUiNavigationAction.value = actionKey
     }
 
-    fun buildCurrentScreenSnapshotSummary(prefs: SuaPreferences, batteryPct: Int): String {
+    fun buildCurrentScreenSnapshotSummary(
+        prefs: SuaPreferences,
+        batteryPct: Int,
+        activeWindowSummary: String = ""
+    ): String {
         val bot = prefs.getAssistantName()
         val user = prefs.getUserName()
         val dev = SuaPreferences.DEVELOPER_NAME
         val mode = _operatingMode.value.label
         val timerSec = _wakeSessionRemainingSeconds.value
-        val lockState = if (_isScreenLockedOverlay.value) "LOCKED OVERLAY ACTIVE" else "UNLOCKED"
+        val lockState = if (_isScreenLockedOverlay.value) "IN-APP OVERLAY ACTIVE" else "UNLOCKED"
         val torchState = if (_isFlashlightOn.value) "ON" else "OFF"
         val bright = _brightnessPercent.value
         val vol = _volumePercent.value
@@ -99,21 +110,27 @@ object SuaStateRepository {
         } else {
             "No pending Call/SMS confirmation card"
         }
-        return "SCREEN SHARE VISION // Assistant: $bot (Dev: $dev, User: $user) | Mode: $mode (${timerSec}s active timer) | Screen: $lockState | Battery: $batteryPct% | Torch: $torchState | Brightness: $bright% | Volume: $vol% | $pendingSummary | Center Reply: \"${_lastSuaReply.value.take(100)}\" | User Spoke: \"${_liveTranscript.value.take(80)}\" | Clickable Controls: [ONLINE, SLEEP, OFFLINE, SETTINGS, HISTORY, MENU, VOICE, SCREEN SHARE, SEND, UNLOCK]"
+        val windowPart = if (activeWindowSummary.isNotBlank()) " | Live Window Nodes: $activeWindowSummary" else ""
+        return "SCREEN SHARE VISION // Assistant: $bot (Dev: $dev, User: $user) | Mode: $mode (${timerSec}s active timer) | Screen: $lockState | Battery: $batteryPct% | Torch: $torchState | Brightness: $bright% | Volume: $vol% | $pendingSummary | Center Reply: \"${_lastSuaReply.value.take(100)}\" | User Spoke: \"${_liveTranscript.value.take(80)}\"$windowPart | Clickable Controls: [ONLINE, SLEEP, OFFLINE, SETTINGS, HISTORY, MENU, VOICE, SCREEN SHARE, SEND, UNLOCK]"
     }
 
-    fun buildCurrentScreenSpokenSummaryHi(prefs: SuaPreferences, batteryPct: Int): String {
+    fun buildCurrentScreenSpokenSummaryHi(
+        prefs: SuaPreferences,
+        batteryPct: Int,
+        hasVisionCapture: Boolean = false
+    ): String {
         val bot = prefs.getAssistantName()
         val user = prefs.getUserName()
         val mode = _operatingMode.value.label
         val timerSec = _wakeSessionRemainingSeconds.value
         val pending = _pendingComms.value
-        val lockPart = if (_isScreenLockedOverlay.value) "स्क्रीन अभी लॉक है, आप 'लॉक खोलो' बोलकर अनलॉक कर सकते हैं। " else ""
+        val lockPart = if (_isScreenLockedOverlay.value) "इन-ऐप स्क्रीन ओवरले अभी चालू है। " else ""
         val pendingPart = if (pending != null) {
             "स्क्रीन पर अभी ${pending.contactName} के लिए ${pending.actionType.label} का कन्फर्मेशन कार्ड खुला है। "
         } else ""
         val torchPart = if (_isFlashlightOn.value) "फ्लैशलाइट चालू है, " else ""
-        return "जी $user, मैंने आपकी स्क्रीन को अच्छे से देख और एनालाइज कर लिया है। ${lockPart}${pendingPart}अभी $bot $mode मोड में है (${timerSec} सेकंड टाइमर), बैटरी $batteryPct प्रतिशत है, ${torchPart}ब्राइटनेस ${_brightnessPercent.value} प्रतिशत और वॉल्यूम ${_volumePercent.value} प्रतिशत है। आप किसी भी बटन का नाम बोलकर जैसे 'सेटिंग पर क्लिक करो', 'हिस्ट्री पर क्लिक करो', या 'लॉक खोलो' बोलकर काम करवा सकते हैं।"
+        val visionNote = if (hasVisionCapture) "मैंने आपकी लाइव स्क्रीन कैप्चर करके एनालाइज कर ली है। " else "ऑफलाइन स्क्रीन स्टेटस के अनुसार: "
+        return "जी $user, $visionNote${lockPart}${pendingPart}अभी $bot $mode मोड में है (${timerSec} सेकंड टाइमर), बैटरी $batteryPct प्रतिशत है, ${torchPart}ब्राइटनेस ${_brightnessPercent.value} प्रतिशत और वॉल्यूम ${_volumePercent.value} प्रतिशत है।"
     }
 
     fun buildCurrentScreenSpokenSummaryEn(prefs: SuaPreferences, batteryPct: Int): String {
@@ -122,17 +139,19 @@ object SuaStateRepository {
         val mode = _operatingMode.value.label
         val timerSec = _wakeSessionRemainingSeconds.value
         val pending = _pendingComms.value
-        val lockPart = if (_isScreenLockedOverlay.value) "The screen lock overlay is currently active; say 'Unlock screen' to open it. " else ""
+        val lockPart = if (_isScreenLockedOverlay.value) "The in-app lock overlay is active. " else ""
         val pendingPart = if (pending != null) {
             "A confirmation card for ${pending.contactName} (${pending.actionType.label}) is visible on screen. "
         } else ""
-        return "Yes $user, I am viewing and analyzing your screen now. ${lockPart}${pendingPart}$bot is in $mode mode with ${timerSec} seconds on the timer, battery is at $batteryPct percent, brightness is ${_brightnessPercent.value} percent, and volume is ${_volumePercent.value} percent. You can say 'Click Settings', 'Click History', or 'Unlock screen' anytime."
+        return "Yes $user, I have analyzed your screen state. ${lockPart}${pendingPart}$bot is in $mode mode with ${timerSec} seconds on the timer, battery is at $batteryPct percent, brightness is ${_brightnessPercent.value} percent, and volume is ${_volumePercent.value} percent."
     }
 
     fun setOperatingMode(mode: MokoOperatingMode) {
         _operatingMode.value = mode
         _isBackgroundServiceRunning.value = (mode != MokoOperatingMode.OFFLINE)
-        if (mode == MokoOperatingMode.OFFLINE) {
+        if (mode != MokoOperatingMode.OFFLINE) {
+            _serviceErrorMessage.value = null
+        } else {
             lastWakeSessionTimestampMs = 0L
             _wakeSessionRemainingSeconds.value = 0
             if (_status.value == SuaStatus.LISTENING) {
@@ -260,13 +279,13 @@ object SuaStateRepository {
 
     fun setInitialLogs(logs: List<CommandLogEntry>) {
         if (_commandLogs.value.isEmpty() && logs.isNotEmpty()) {
-            _commandLogs.value = logs
+            _commandLogs.value = logs.take(SuaPreferences.MAX_COMMAND_LOGS)
         }
     }
 
     fun setInitialMemories(memories: List<MokoMemoryItem>) {
         if (_memoryItems.value.isEmpty() && memories.isNotEmpty()) {
-            _memoryItems.value = memories
+            _memoryItems.value = memories.take(SuaPreferences.MAX_MEMORY_ITEMS)
         }
     }
 
@@ -281,12 +300,12 @@ object SuaStateRepository {
         val entry = CommandLogEntry(
             id = System.currentTimeMillis(),
             timestamp = timeFmt.format(Date()),
-            userCommand = userCommand,
-            suaResponse = suaResponse,
+            userCommand = userCommand.take(SuaPreferences.MAX_LOG_TEXT_LENGTH),
+            suaResponse = suaResponse.take(SuaPreferences.MAX_LOG_TEXT_LENGTH),
             actionType = actionType,
             actionSuccess = actionSuccess
         )
-        val updated = listOf(entry) + _commandLogs.value.take(59)
+        val updated = (listOf(entry) + _commandLogs.value).take(SuaPreferences.MAX_COMMAND_LOGS)
         _commandLogs.value = updated
         prefs?.saveCommandLogs(updated)
     }
@@ -318,7 +337,7 @@ object SuaStateRepository {
         isAuto: Boolean = true,
         prefs: SuaPreferences? = null
     ) {
-        val clean = factText.trim()
+        val clean = factText.trim().take(SuaPreferences.MAX_LOG_TEXT_LENGTH)
         if (clean.isEmpty()) return
         // Avoid exact duplicate memories
         if (_memoryItems.value.any { it.factText.equals(clean, ignoreCase = true) }) return
@@ -330,7 +349,7 @@ object SuaStateRepository {
             timestamp = timeFmt.format(Date()),
             isAutoExtracted = isAuto
         )
-        val updated = listOf(newItem) + _memoryItems.value.take(59)
+        val updated = (listOf(newItem) + _memoryItems.value).take(SuaPreferences.MAX_MEMORY_ITEMS)
         _memoryItems.value = updated
         prefs?.saveMemoryItems(updated)
     }

@@ -48,6 +48,10 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
     val memoryItems: StateFlow<List<MokoMemoryItem>> = SuaStateRepository.memoryItems
     val pendingComms: StateFlow<PendingCommsConfirmation?> = SuaStateRepository.pendingComms
     val audioRmsDb: StateFlow<Float> = SuaStateRepository.audioRmsDb
+    val serviceErrorMessage: StateFlow<String?> = SuaStateRepository.serviceErrorMessage
+
+    private val _privacyConsentAccepted = MutableStateFlow(prefs.hasAcceptedVoicePrivacyConsent())
+    val privacyConsentAccepted: StateFlow<Boolean> = _privacyConsentAccepted.asStateFlow()
 
     private val _userName = MutableStateFlow(prefs.getUserName())
     val userName: StateFlow<String> = _userName.asStateFlow()
@@ -123,6 +127,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         controller.syncHardwareTelemetry()
         _batteryPercent.value = controller.getBatteryPercentage()
         _permissionStatuses.value = controller.getPermissionStatusList()
+        _privacyConsentAccepted.value = prefs.hasAcceptedVoicePrivacyConsent()
         _userName.value = prefs.getUserName()
         _assistantName.value = prefs.getAssistantName()
         _savedApiKey.value = prefs.getSavedUserApiKey()
@@ -138,6 +143,22 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _voicePitch.value = prefs.getVoicePitch()
         _voiceSpeed.value = prefs.getVoiceSpeed()
         _customCommands.value = prefs.getCustomCommands()
+    }
+
+    fun setVoicePrivacyConsent(accepted: Boolean) {
+        prefs.setVoicePrivacyConsentAccepted(accepted)
+        _privacyConsentAccepted.value = accepted
+        if (accepted) {
+            SuaStateRepository.updateServiceError(null)
+            _settingsBannerMessage.value = "PRIVACY CONSENT ENABLED // Voice & Cloud AI processing authorized."
+        } else {
+            activateOfflineMode()
+            _settingsBannerMessage.value = "PRIVACY CONSENT REVOKED // Background microphone & cloud speech turned OFF."
+        }
+    }
+
+    fun dismissServiceError() {
+        SuaStateRepository.updateServiceError(null)
     }
 
     fun consumeUiNavigationAction() {

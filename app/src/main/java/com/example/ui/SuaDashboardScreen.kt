@@ -1,6 +1,8 @@
 package com.example.ui
 
 import android.Manifest
+import android.content.Context
+import android.media.projection.MediaProjectionManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -40,7 +42,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.StopScreenShare
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BrightnessHigh
@@ -59,11 +63,10 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -104,6 +107,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -116,6 +120,7 @@ import com.example.data.MokoOperatingMode
 import com.example.data.PendingCommsConfirmation
 import com.example.data.SuaPreferences
 import com.example.data.SuaStatus
+import com.example.service.ScreenCaptureManager
 import com.example.ui.theme.SuaAmber
 import com.example.ui.theme.SuaBorder
 import com.example.ui.theme.SuaCrimson
@@ -134,8 +139,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun SuaDashboardScreen(
     viewModel: SuaViewModel,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onRequestBiometricKeyguardDismiss: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val status by viewModel.status.collectAsStateWithLifecycle()
     val operatingMode by viewModel.operatingMode.collectAsStateWithLifecycle()
     val wakeRemainingSeconds by viewModel.wakeSessionRemainingSeconds.collectAsStateWithLifecycle()
@@ -153,6 +160,8 @@ fun SuaDashboardScreen(
     val memoryItems by viewModel.memoryItems.collectAsStateWithLifecycle()
     val pendingComms by viewModel.pendingComms.collectAsStateWithLifecycle()
     val audioRms by viewModel.audioRmsDb.collectAsStateWithLifecycle()
+    val serviceErrorMessage by viewModel.serviceErrorMessage.collectAsStateWithLifecycle()
+    val privacyConsentAccepted by viewModel.privacyConsentAccepted.collectAsStateWithLifecycle()
     val hasApiKey by viewModel.hasEffectiveApiKey.collectAsStateWithLifecycle()
     val batteryPercent by viewModel.batteryPercent.collectAsStateWithLifecycle()
     val userName by viewModel.userName.collectAsStateWithLifecycle()
@@ -160,9 +169,23 @@ fun SuaDashboardScreen(
 
     var commandInput by remember { mutableStateOf("") }
     var pendingRequestedMode by remember { mutableStateOf(MokoOperatingMode.ONLINE) }
+    var showPrivacyConsentDialog by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+
+    val mediaProjectionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        ScreenCaptureManager.onMediaProjectionPermissionResult(
+            context = context,
+            resultCode = result.resultCode,
+            data = result.data
+        )
+        if (ScreenCaptureManager.hasMediaProjectionConsent()) {
+            viewModel.toggleScreenShareAndAnalyze()
+        }
+    }
 
     val micPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -181,7 +204,33 @@ fun SuaDashboardScreen(
         }
     }
 
-    // Execute Voice Click UI Navigation actions ("Click Settings", "Click Menu", "Close Menu", "REQUEST_PERMISSIONS")
+    fun requestModeWithMicPermission(targetMode: MokoOperatingMode) {
+        if (targetMode == MokoOperatingMode.OFFLINE) {
+            viewModel.activateOfflineMode()
+            return
+        }
+        pendingRequestedMode = targetMode
+        if (!privacyConsentAccepted) {
+            showPrivacyConsentDialog = true
+            return
+        }
+        val hasCorePerms = viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO) &&
+            viewModel.controller.hasPermission(Manifest.permission.READ_CONTACTS) &&
+            viewModel.controller.hasPermission(Manifest.permission.CALL_PHONE)
+        if (hasCorePerms) {
+            if (targetMode == MokoOperatingMode.SLEEP) {
+                viewModel.activateSleepMode()
+            } else {
+                viewModel.activateOnlineMode()
+            }
+        } else {
+            micPermLauncher.launch(
+                viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
+            )
+        }
+    }
+
+    // Execute Voice Click UI Navigation actions & System Consent Prompts
     LaunchedEffect(pendingUiAction) {
         when (pendingUiAction) {
             "OPEN_SETTINGS" -> {
@@ -203,28 +252,22 @@ fun SuaDashboardScreen(
                     viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
                 )
             }
-        }
-    }
-
-    fun requestModeWithMicPermission(targetMode: MokoOperatingMode) {
-        if (targetMode == MokoOperatingMode.OFFLINE) {
-            viewModel.activateOfflineMode()
-            return
-        }
-        pendingRequestedMode = targetMode
-        val hasCorePerms = viewModel.controller.hasPermission(Manifest.permission.RECORD_AUDIO) &&
-            viewModel.controller.hasPermission(Manifest.permission.READ_CONTACTS) &&
-            viewModel.controller.hasPermission(Manifest.permission.CALL_PHONE)
-        if (hasCorePerms) {
-            if (targetMode == MokoOperatingMode.SLEEP) {
-                viewModel.activateSleepMode()
-            } else {
-                viewModel.activateOnlineMode()
+            "REQUEST_MEDIA_PROJECTION" -> {
+                viewModel.consumeUiNavigationAction()
+                try {
+                    val mpm = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    mediaProjectionLauncher.launch(mpm.createScreenCaptureIntent())
+                } catch (_: Exception) {
+                }
             }
-        } else {
-            micPermLauncher.launch(
-                viewModel.controller.getRequiredRuntimePermissions().toTypedArray()
-            )
+            "REQUEST_BIOMETRIC_KEYGUARD_DISMISS" -> {
+                viewModel.consumeUiNavigationAction()
+                onRequestBiometricKeyguardDismiss()
+            }
+            "SHOW_PRIVACY_CONSENT" -> {
+                viewModel.consumeUiNavigationAction()
+                showPrivacyConsentDialog = true
+            }
         }
     }
 
@@ -513,7 +556,7 @@ fun SuaDashboardScreen(
                                     )
                                 ) {
                                     Icon(
-                                        imageVector = if (isScreenShareActive) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
+                                        imageVector = if (isScreenShareActive) Icons.AutoMirrored.Filled.StopScreenShare else Icons.AutoMirrored.Filled.ScreenShare,
                                         contentDescription = "Screen Share & Analyze",
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -601,6 +644,47 @@ fun SuaDashboardScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
+                    // 0. SERVICE / PRIVACY ERROR BANNER (Never fail silently)
+                    AnimatedVisibility(visible = !serviceErrorMessage.isNullOrBlank()) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 600.dp)
+                                .padding(bottom = 8.dp)
+                                .testTag("service_error_banner"),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = SuaSurfaceElevated)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.5.dp, SuaCrimson, RoundedCornerShape(16.dp))
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = serviceErrorMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SuaTextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { viewModel.dismissServiceError() },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Dismiss Service Alert",
+                                        tint = SuaCrimson
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Active Call / SMS / WhatsApp Multi-Number & Hindi/English Confirmation Card (only shown when confirming a Call/SMS)
                     AnimatedVisibility(visible = pendingComms != null) {
                         pendingComms?.let { activePending ->
@@ -651,6 +735,26 @@ fun SuaDashboardScreen(
             ) {
                 SuaScreenLockOverlay(
                     onUnlock = { viewModel.unlockScreenOverlay() }
+                )
+            }
+
+            // VOICE & CLOUD PRIVACY CONSENT DIALOG (Audit Item 10)
+            AnimatedVisibility(
+                visible = showPrivacyConsentDialog,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                VoicePrivacyConsentModal(
+                    assistantName = assistantName,
+                    onAccept = {
+                        showPrivacyConsentDialog = false
+                        viewModel.setVoicePrivacyConsent(true)
+                        requestModeWithMicPermission(pendingRequestedMode)
+                    },
+                    onDecline = {
+                        showPrivacyConsentDialog = false
+                        viewModel.setVoicePrivacyConsent(false)
+                    }
                 )
             }
         }
@@ -1070,7 +1174,7 @@ private fun NeonVioletGlassOrbCard(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (isScreenShareActive) Icons.Default.ScreenShare else Icons.Default.RecordVoiceOver,
+                            imageVector = if (isScreenShareActive) Icons.AutoMirrored.Filled.ScreenShare else Icons.Default.RecordVoiceOver,
                             contentDescription = "Screen Share or Test Voice",
                             tint = if (isScreenShareActive) SuaEmerald else SuaCyan,
                             modifier = Modifier.size(14.dp)
@@ -1388,7 +1492,7 @@ private fun MokoSideDrawerContent(
             )
         ) {
             Icon(
-                imageVector = if (isScreenShareActive) Icons.Default.StopScreenShare else Icons.Default.ScreenShare,
+                imageVector = if (isScreenShareActive) Icons.AutoMirrored.Filled.StopScreenShare else Icons.AutoMirrored.Filled.ScreenShare,
                 contentDescription = "Screen Share",
                 tint = if (isScreenShareActive) SuaEmerald else SuaCyan
             )
@@ -1827,3 +1931,104 @@ private fun SuaScreenLockOverlay(onUnlock: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun VoicePrivacyConsentModal(
+    assistantName: String,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(SuaObsidian.copy(alpha = 0.90f))
+            .clickable(enabled = false) {},
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(24.dp)
+                .widthIn(max = 480.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(SuaSurfaceCard)
+                .border(2.dp, SuaCyan, RoundedCornerShape(24.dp))
+                .padding(24.dp)
+                .testTag("voice_privacy_consent_dialog"),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(58.dp)
+                    .clip(CircleShape)
+                    .background(SuaDeepNavy)
+                    .border(1.5.dp, SuaCyan, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Security,
+                    contentDescription = "Voice & Cloud Privacy Notice",
+                    tint = SuaCyan,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            Text(
+                text = "VOICE & CLOUD PRIVACY NOTICE",
+                style = MaterialTheme.typography.titleMedium,
+                color = SuaTextPrimary,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+
+            Text(
+                text = "• When ONLINE or SLEEP mode is active, $assistantName uses Android SpeechRecognizer to listen for your wake-word ('Hi $assistantName' / 'Ok $assistantName') and voice commands.\n" +
+                    "• In ONLINE mode, recognized text (and optional Screen Share snapshots when you tap SHARE) are sent to your configured AI provider (Gemini / OpenAI / Anthropic) and Kalpa Labs TTS over encrypted HTTPS.\n" +
+                    "• In SLEEP mode, offline speech recognition is preferred and AI cloud Q&A is disabled.\n" +
+                    "• All personal data (contacts, memories, logs, API keys) is encrypted on-device with AES-256-GCM and excluded from cloud backups.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SuaTextSecondary
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onDecline,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("decline_privacy_consent_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, SuaCrimson)
+                ) {
+                    Text(
+                        text = "DECLINE",
+                        color = SuaCrimson,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                Button(
+                    onClick = onAccept,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("accept_privacy_consent_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SuaEmerald,
+                        contentColor = SuaObsidian
+                    )
+                ) {
+                    Text(
+                        text = "I AGREE & START",
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+    }
+}
+

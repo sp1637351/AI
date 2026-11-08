@@ -142,6 +142,7 @@ fun SettingsScreen(
     val commandLogs by viewModel.commandLogs.collectAsStateWithLifecycle()
     val memoryItems by viewModel.memoryItems.collectAsStateWithLifecycle()
     val bannerMessage by viewModel.settingsBannerMessage.collectAsStateWithLifecycle()
+    val privacyConsentAccepted by viewModel.privacyConsentAccepted.collectAsStateWithLifecycle()
 
     var userNameInput by remember(userName) { mutableStateOf(userName) }
     var assistantNameInput by remember(assistantName) { mutableStateOf(assistantName) }
@@ -206,17 +207,17 @@ fun SettingsScreen(
     @SuppressLint("BatteryLife")
     fun launchBatteryOptIntent() {
         try {
-            val intent = Intent(
-                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                Uri.parse("package:${context.packageName}")
-            )
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             systemSettingsLauncher.launch(intent)
         } catch (_: Exception) {
-            try {
-                val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                systemSettingsLauncher.launch(fallback)
-            } catch (_: Exception) {
-            }
+        }
+    }
+
+    fun launchAccessibilitySettingsIntent() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            systemSettingsLauncher.launch(intent)
+        } catch (_: Exception) {
         }
     }
 
@@ -228,8 +229,6 @@ fun SettingsScreen(
             launchWriteSettingsIntent()
         } else if (!viewModel.controller.isDeviceAdminActive()) {
             launchDeviceAdminIntent()
-        } else if (!viewModel.controller.isIgnoringBatteryOptimizations()) {
-            launchBatteryOptIntent()
         }
     }
 
@@ -385,17 +384,25 @@ fun SettingsScreen(
                                         }
                                     }
 
+                                    val hasKalpaKey = kalpaApiKey.isNotBlank()
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(SuaEmerald.copy(alpha = 0.16f))
-                                            .border(1.dp, SuaEmerald, RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (hasKalpaKey) SuaEmerald.copy(alpha = 0.16f)
+                                                else SuaAmber.copy(alpha = 0.16f)
+                                            )
+                                            .border(
+                                                1.dp,
+                                                if (hasKalpaKey) SuaEmerald else SuaAmber,
+                                                RoundedCornerShape(8.dp)
+                                            )
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
                                         Text(
-                                            text = "ACTIVE",
+                                            text = if (hasKalpaKey) "KEY CONFIGURED" else "ANDROID TTS FALLBACK",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = SuaEmerald,
+                                            color = if (hasKalpaKey) SuaEmerald else SuaAmber,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
@@ -998,6 +1005,36 @@ fun SettingsScreen(
                                     )
                                 }
 
+                                // Voice & Cloud Privacy Consent Switch (Audit Item 10)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Voice & Cloud AI Privacy Consent",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = SuaTextPrimary
+                                        )
+                                        Text(
+                                            text = "Authorizes SpeechRecognizer & encrypted HTTPS AI calls in ONLINE mode (AES-256-GCM local storage)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = SuaTextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = privacyConsentAccepted,
+                                        onCheckedChange = { viewModel.setVoicePrivacyConsent(it) },
+                                        modifier = Modifier.testTag("privacy_consent_switch"),
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = SuaObsidian,
+                                            checkedTrackColor = SuaEmerald
+                                        )
+                                    )
+                                }
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1405,6 +1442,7 @@ fun SettingsScreen(
                                                 when (perm.id) {
                                                     "WRITE_SETTINGS" -> launchWriteSettingsIntent()
                                                     "DEVICE_ADMIN" -> launchDeviceAdminIntent()
+                                                    "ACCESSIBILITY_SERVICE" -> launchAccessibilitySettingsIntent()
                                                     "BATTERY_OPT" -> launchBatteryOptIntent()
                                                     else -> multiplePermissionsLauncher.launch(arrayOf(perm.id))
                                                 }

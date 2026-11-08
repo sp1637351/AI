@@ -26,10 +26,14 @@ class SuaBrain(
 ) {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(9, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
-        .writeTimeout(9, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .writeTimeout(5, TimeUnit.SECONDS)
         .build()
+
+    companion object {
+        private const val TOTAL_FALLBACK_BUDGET_MS = 8_000L
+    }
 
     private sealed class AiCallOutcome {
         data class Success(val command: ParsedCommand) : AiCallOutcome()
@@ -2132,48 +2136,44 @@ class SuaBrain(
         assistantName: String,
         speakEn: Boolean
     ): AiCallOutcome {
-        val preferred = prefs.getGeminiModel()
-        val candidateModels = (listOf(preferred) + SuaPreferences.SUPPORTED_GEMINI_MODELS).distinct().toMutableList()
-        val triedModels = mutableSetOf<String>()
+        val startMs = System.currentTimeMillis()
+        val preferred = prefs.getGeminiModel().removePrefix("models/")
 
-        var lastFailure = AiCallOutcome.Failure("GEMINI", 0, "Network error")
-        var idx = 0
-        while (idx < candidateModels.size) {
-            val modelId = candidateModels[idx].removePrefix("models/")
-            idx++
-            if (!triedModels.add(modelId)) continue
-
-            val outcome = callGeminiSingleModel(userCommand, apiKey, modelId, userName, assistantName, speakEn)
-            when (outcome) {
-                is AiCallOutcome.Success -> {
-                    if (modelId != preferred) {
-                        prefs.setGeminiModel(modelId)
-                    }
-                    return outcome
-                }
-                is AiCallOutcome.Failure -> {
-                    lastFailure = outcome
-                    if (outcome.httpCode == 404) {
-                        val suggested = Regex("use\\s+models/([a-zA-Z0-9._-]+)")
-                            .find(outcome.errorDetail)
-                            ?.groupValues
-                            ?.getOrNull(1)
-                        if (!suggested.isNullOrBlank() && !triedModels.contains(suggested)) {
-                            candidateModels.add(idx, suggested)
-                        }
-                    } else {
-                        return outcome
-                    }
-                }
-            }
+        // 1. Primary call on the user's configured Gemini model
+        val primaryOutcome = callGeminiSingleModel(userCommand, apiKey, preferred, userName, assistantName, speakEn)
+        if (primaryOutcome is AiCallOutcome.Success) {
+            return primaryOutcome
         }
 
-        val discoveredModel = discoverAvailableGeminiModel(apiKey, triedModels)
-        if (!discoveredModel.isNullOrBlank()) {
-            val outcome = callGeminiSingleModel(userCommand, apiKey, discoveredModel, userName, assistantName, speakEn)
-            if (outcome is AiCallOutcome.Success) {
-                prefs.setGeminiModel(discoveredModel)
-                return outcome
+        val lastFailure = primaryOutcome as AiCallOutcome.Failure
+        val elapsedAfterPrimary = System.currentTimeMillis() - startMs
+
+        // 2. Only retry once if HTTP 404 (model renamed) or 503 (transient overload) AND within total timeout budget
+        if ((lastFailure.httpCode == 404 || lastFailure.httpCode == 503) &&
+            elapsedAfterPrimary < (TOTAL_FALLBACK_BUDGET_MS - 2_500L)
+        ) {
+            val suggested = Regex("use\\s+models/([a-zA-Z0-9._-]+)")
+                .find(lastFailure.errorDetail)
+                ?.groupValues
+                ?.getOrNull(1)
+            val fallbackModel = when {
+                !suggested.isNullOrBlank() && suggested != preferred -> suggested
+                preferred != "gemini-3-flash-preview" -> "gemini-3-flash-preview"
+                else -> discoverAvailableGeminiModel(apiKey, setOf(preferred))
+            }
+            if (!fallbackModel.isNullOrBlank() && fallbackModel != preferred) {
+                val retryOutcome = callGeminiSingleModel(
+                    userCommand,
+                    apiKey,
+                    fallbackModel,
+                    userName,
+                    assistantName,
+                    speakEn
+                )
+                if (retryOutcome is AiCallOutcome.Success) {
+                    prefs.setGeminiModel(fallbackModel)
+                    return retryOutcome
+                }
             }
         }
 
@@ -2182,8 +2182,12 @@ class SuaBrain(
 
     private fun discoverAvailableGeminiModel(apiKey: String, alreadyTried: Set<String>): String? {
         return try {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey"
-            val req = Request.Builder().url(url).get().build()
+            val url = "https://generativelanguage.googleapis.com/v1beta/models"
+            val req = Request.Builder()
+                .url(url)
+                .addHeader("x-goog-api-key", apiKey)
+                .get()
+                .build()
             httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 val body = resp.body?.string().orEmpty()
@@ -2253,15 +2257,17 @@ class SuaBrain(
                 )
             }
 
-            val customUrl = prefs.getCustomApiUrl()
+            val customUrl = prefs.getCustomApiUrl().replace(Regex("[?&]key=[^&]+"), "")
             val url = if (customUrl.isNotEmpty() && customUrl.contains("googleapis.com")) {
-                if (customUrl.contains("key=")) customUrl else "$customUrl?key=$apiKey"
+                customUrl
             } else {
-                "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent?key=$apiKey"
+                "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
             }
 
             val request = Request.Builder()
                 .url(url)
+                .addHeader("x-goog-api-key", apiKey)
+                .addHeader("Content-Type", "application/json")
                 .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
                 .build()
 
@@ -2294,6 +2300,100 @@ class SuaBrain(
             }
         } catch (e: Exception) {
             AiCallOutcome.Failure("GEMINI", 0, e.localizedMessage ?: "Network failure")
+        }
+    }
+
+    /**
+     * Multimodal Gemini Vision analysis of a captured screen frame (Base64 JPEG) + Accessibility window text.
+     * Uses x-goog-api-key header (never query string).
+     */
+    fun analyzeScreenBitmapWithVision(
+        base64Jpeg: String,
+        windowTextSummary: String,
+        userQuestion: String = ""
+    ): ParsedCommand? {
+        val apiKey = prefs.getEffectiveApiKey()
+        if (apiKey.isBlank()) return null
+
+        val userName = prefs.getUserName()
+        val assistantName = prefs.getAssistantName()
+        val modelId = prefs.getGeminiModel().removePrefix("models/").ifBlank { "gemini-3-flash-preview" }
+
+        return try {
+            val partsArray = JSONArray()
+            if (base64Jpeg.isNotBlank()) {
+                partsArray.put(
+                    JSONObject().put(
+                        "inline_data",
+                        JSONObject()
+                            .put("mime_type", "image/jpeg")
+                            .put("data", base64Jpeg)
+                    )
+                )
+            }
+            val promptText = buildString {
+                append("You are $assistantName, a helpful voice assistant analyzing the user's ($userName's) live phone screen. ")
+                if (windowTextSummary.isNotBlank()) {
+                    append("Accessibility window nodes: $windowTextSummary. ")
+                }
+                if (userQuestion.isNotBlank() && userQuestion.uppercase() != "ON") {
+                    append("User question about screen: \"$userQuestion\". ")
+                }
+                append("Respond ONLY in valid JSON with two keys: ")
+                append("{\"displayReply\": \"100% English summary of what is visible on screen\", ")
+                append("\"spokenReply\": \"Natural Hindi (Devanagari) spoken explanation of what is visible on the screen for $userName\"}")
+            }
+            partsArray.put(JSONObject().put("text", promptText))
+
+            val payload = JSONObject().apply {
+                put(
+                    "contents",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("parts", partsArray)
+                    )
+                )
+                put(
+                    "generationConfig",
+                    JSONObject()
+                        .put("temperature", 0.2)
+                        .put("responseMimeType", "application/json")
+                )
+            }
+
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("x-goog-api-key", apiKey)
+                .addHeader("Content-Type", "application/json")
+                .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val bodyStr = response.body?.string().orEmpty()
+                val textOut = JSONObject(bodyStr)
+                    .optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text", "")
+                    .orEmpty()
+                if (textOut.isBlank()) return null
+
+                val parsed = JSONObject(textOut)
+                val disp = sanitizeForHud(parsed.optString("displayReply", "SCREEN VISION // Screen analyzed."))
+                val spoken = parsed.optString("spokenReply", "जी $userName, मैंने आपकी स्क्रीन देख ली है।")
+                ParsedCommand(
+                    action = DeviceActionType.SCREEN_SHARE_ANALYZE,
+                    displayReply = disp,
+                    spokenReply = spoken
+                )
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 }

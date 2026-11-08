@@ -514,12 +514,26 @@ object HindiTransliterator {
     fun isUserBargeInPhrase(rawInput: String, assistantName: String = "Moko"): Boolean {
         val trimmed = rawInput.trim()
         if (trimmed.isEmpty()) return false
+        val lower = trimmed.lowercase()
+
+        // Never treat Moko's own status announcements ("ऑनलाइन हो गई हूँ", "स्लीप मोड में हूँ", "जी बॉस") as user barge-in
+        val selfAnnouncements = listOf(
+            "ऑनलाइन हो गई हूँ", "स्लीप मोड में हूँ", "जी बॉस", "माफ़ कीजिए", "किया जा रहा है", "कर दिया गया है", "चलाया जा रहा है"
+        )
+        if (selfAnnouncements.any { lower.contains(it) }) {
+            return false
+        }
+
         if (isStopCommand(trimmed, assistantName)) return true
-        val (hasWake, _) = checkAndStripWakeWord(trimmed, assistantName)
-        if (hasWake) return true
         val (isCorr, _) = stripConversationalCorrectionPrefix(trimmed)
         if (isCorr) return true
-        val lower = trimmed.lowercase()
+
+        val botLower = assistantName.trim().lowercase().ifEmpty { "moko" }
+        val startsWithWakePrefix = Regex(
+            "^(?i)(hi\\s+$botLower|hey\\s+$botLower|ok\\s+$botLower|okay\\s+$botLower|suno\\s+$botLower|हाय\\s+मोको|हे\\s+मोको|ओके\\s+मोको|सुनो\\s+मोको|अरे\\s+मोको)"
+        ).containsMatchIn(lower)
+        if (startsWithWakePrefix) return true
+
         return Regex("^(?i)(नहीं|नही|अरे|सुनो|रुको|प्राइम|प्रधानमंत्री|राष्ट्रपति|साउंड|आवाज़|आवाज|म्यूजिक|गाना|कॉल|no\\b|wait\\b|hey\\b|volume\\b)").containsMatchIn(lower)
     }
 
@@ -534,6 +548,11 @@ object HindiTransliterator {
         val wordMappings = mapOf(
             "अरिजीत सिंह" to "Arijit Singh",
             "अरिजीत" to "Arijit Singh",
+            "पवन सिंह" to "Pawan Singh",
+            "खेसारी लाल" to "Khesari Lal Yadav",
+            "दिलजीत" to "Diljit Dosanjh",
+            "श्रेया घोषाल" to "Shreya Ghoshal",
+            "जुबिन नौटियाल" to "Jubin Nautiyal",
             "केसरिया" to "Kesariya",
             "तुम ही हो" to "Tum Hi Ho",
             "चन्ना मेरेया" to "Channa Mereya",

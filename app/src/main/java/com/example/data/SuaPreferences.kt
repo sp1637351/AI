@@ -9,10 +9,12 @@ import com.example.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
+import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class SuaPreferences(context: Context) {
     private val prefs: SharedPreferences =
@@ -21,8 +23,10 @@ class SuaPreferences(context: Context) {
     companion object {
         private const val KEY_USER_GEMINI_API_KEY_ENC = "user_gemini_api_key_enc_v2"
         private const val KEY_AI_PROVIDER = "ai_provider_type_v1"
-        private const val KEY_CUSTOM_API_URL = "custom_api_endpoint_url_v1"
+        private const val KEY_CUSTOM_API_URL_ENC = "custom_api_endpoint_url_enc_v2"
         private const val KEY_CONTINUOUS_BG = "continuous_bg_listening"
+        private const val KEY_SAVED_OPERATING_MODE = "saved_moko_operating_mode_v1"
+        private const val KEY_VOICE_PRIVACY_CONSENT = "voice_cloud_privacy_consent_v1"
         private const val KEY_LOW_BATTERY_WAKE = "low_battery_ok_google_wake"
         private const val KEY_REQUIRE_WAKE_WORD = "require_wake_word_bg"
         private const val KEY_GEMINI_MODEL = "gemini_model_id_v3"
@@ -30,19 +34,22 @@ class SuaPreferences(context: Context) {
         private const val KEY_VOICE_PRESET = "voice_preset_v1"
         private const val KEY_VOICE_PITCH = "voice_pitch_v1"
         private const val KEY_VOICE_SPEED = "voice_speed_v1"
-        private const val KEY_USER_NAME = "custom_user_name_v1"
+        private const val KEY_USER_NAME_ENC = "custom_user_name_enc_v2"
         private const val KEY_ASSISTANT_NAME = "custom_assistant_name_v1"
-        private const val KEY_QUICK_CONTACTS = "quick_contacts_real_v3_json"
-        private const val KEY_COMMAND_LOGS = "command_logs_v3_json"
-        private const val KEY_MOKO_MEMORIES = "moko_memories_v1_json"
-        private const val KEY_CUSTOM_COMMANDS = "custom_voice_commands_v1_json"
-        private const val KEY_KALPA_API_KEY_ENC = "kalpa_voice_api_key_enc_v1"
+        private const val KEY_QUICK_CONTACTS_ENC = "quick_contacts_enc_v4"
+        private const val KEY_COMMAND_LOGS_ENC = "command_logs_enc_v4"
+        private const val KEY_MOKO_MEMORIES_ENC = "moko_memories_enc_v2"
+        private const val KEY_CUSTOM_COMMANDS_ENC = "custom_voice_commands_enc_v2"
+        private const val KEY_KALPA_API_KEY_ENC = "kalpa_voice_api_key_enc_v2"
         private const val KEY_KALPA_VOICE_ID = "kalpa_voice_id_v1"
+        private const val KEY_LOCAL_FALLBACK_AES = "local_fallback_aes_key_v1"
         private const val KEYSTORE_ALIAS = "SuaGeminiApiKeyMasterKey"
 
         const val DEVELOPER_NAME = "MR. SHASHANK"
-        const val DEFAULT_KALPA_API_KEY = "sk-live-8d7644911c4cb82b45f6dff3126cb3ac903bc95307b5ba50"
         const val DEFAULT_KALPA_VOICE_ID = "5e0c5704-590f-483b-b291-00a2415cb67e" // Kiara (Feminine Hindi & English)
+        const val MAX_COMMAND_LOGS = 50
+        const val MAX_MEMORY_ITEMS = 50
+        const val MAX_LOG_TEXT_LENGTH = 300
 
         val KALPA_VOICE_OPTIONS = listOf(
             KalpaVoiceOption(
@@ -66,13 +73,30 @@ class SuaPreferences(context: Context) {
         )
     }
 
+    /**
+     * Reads the Kalpa Labs TTS API key from encrypted SharedPreferences or BuildConfig (.env).
+     * Never hardcodes live API keys in source code.
+     */
     fun getKalpaApiKey(): String {
         val raw = prefs.getString(KEY_KALPA_API_KEY_ENC, "") ?: ""
         if (raw.isNotBlank()) {
             val dec = decryptString(raw).trim()
             if (dec.isNotEmpty()) return dec
         }
-        return DEFAULT_KALPA_API_KEY
+        return try {
+            val buildKey = BuildConfig.KALPA_API_KEY.trim()
+            if (buildKey.isNotEmpty() &&
+                buildKey != "MY_KALPA_API_KEY" &&
+                buildKey != "null" &&
+                !buildKey.startsWith("YOUR_")
+            ) {
+                buildKey
+            } else {
+                ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     fun saveKalpaApiKey(apiKey: String) {
@@ -92,6 +116,28 @@ class SuaPreferences(context: Context) {
 
     fun setKalpaVoiceId(voiceId: String) {
         prefs.edit().putString(KEY_KALPA_VOICE_ID, voiceId.trim().ifEmpty { DEFAULT_KALPA_VOICE_ID }).apply()
+    }
+
+    fun hasAcceptedVoicePrivacyConsent(): Boolean {
+        return prefs.getBoolean(KEY_VOICE_PRIVACY_CONSENT, false)
+    }
+
+    fun setVoicePrivacyConsentAccepted(accepted: Boolean) {
+        prefs.edit().putBoolean(KEY_VOICE_PRIVACY_CONSENT, accepted).apply()
+    }
+
+    fun getSavedOperatingMode(): MokoOperatingMode {
+        val raw = prefs.getString(KEY_SAVED_OPERATING_MODE, MokoOperatingMode.OFFLINE.name)
+            ?: MokoOperatingMode.OFFLINE.name
+        return try {
+            MokoOperatingMode.valueOf(raw)
+        } catch (_: Exception) {
+            MokoOperatingMode.OFFLINE
+        }
+    }
+
+    fun setSavedOperatingMode(mode: MokoOperatingMode) {
+        prefs.edit().putString(KEY_SAVED_OPERATING_MODE, mode.name).apply()
     }
 
     fun getSavedUserApiKey(): String {
@@ -128,11 +174,18 @@ class SuaPreferences(context: Context) {
     }
 
     fun getCustomApiUrl(): String {
-        return prefs.getString(KEY_CUSTOM_API_URL, "")?.trim().orEmpty()
+        val enc = prefs.getString(KEY_CUSTOM_API_URL_ENC, "") ?: ""
+        if (enc.isBlank()) return ""
+        return decryptString(enc).trim()
     }
 
     fun setCustomApiUrl(url: String) {
-        prefs.edit().putString(KEY_CUSTOM_API_URL, url.trim()).apply()
+        val clean = url.trim()
+        if (clean.isEmpty()) {
+            prefs.edit().remove(KEY_CUSTOM_API_URL_ENC).apply()
+            return
+        }
+        prefs.edit().putString(KEY_CUSTOM_API_URL_ENC, encryptString(clean)).apply()
     }
 
     /**
@@ -158,13 +211,17 @@ class SuaPreferences(context: Context) {
     }
 
     fun getUserName(): String {
-        return prefs.getString(KEY_USER_NAME, "Shashank")?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: "Shashank"
+        val enc = prefs.getString(KEY_USER_NAME_ENC, null)
+        if (!enc.isNullOrBlank()) {
+            val dec = decryptString(enc).trim()
+            if (dec.isNotEmpty()) return dec
+        }
+        return "Shashank"
     }
 
     fun setUserName(name: String) {
         val clean = name.trim().ifEmpty { "Shashank" }
-        prefs.edit().putString(KEY_USER_NAME, clean).apply()
+        prefs.edit().putString(KEY_USER_NAME_ENC, encryptString(clean)).apply()
     }
 
     fun getAssistantName(): String {
@@ -218,8 +275,8 @@ class SuaPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_LOW_BATTERY_WAKE, enabled).apply()
     }
 
-    private fun getOrCreateSecretKey(): SecretKey? {
-        return try {
+    private fun getOrCreateSecretKey(): SecretKey {
+        try {
             val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             val existing = keyStore.getEntry(KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry
             if (existing != null) return existing.secretKey
@@ -236,50 +293,56 @@ class SuaPreferences(context: Context) {
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .build()
             keyGen.init(spec)
-            keyGen.generateKey()
+            return keyGen.generateKey()
         } catch (_: Exception) {
-            null
+            // JVM Unit Test / Robolectric fallback where hardware AndroidKeyStore provider isn't mounted:
+            // generate a random 256-bit AES key per local store so AES-GCM still encrypts all values.
+            val existingB64 = prefs.getString(KEY_LOCAL_FALLBACK_AES, null)
+            val keyBytes = if (!existingB64.isNullOrBlank()) {
+                Base64.decode(existingB64, Base64.NO_WRAP)
+            } else {
+                ByteArray(32).also {
+                    SecureRandom().nextBytes(it)
+                    prefs.edit().putString(
+                        KEY_LOCAL_FALLBACK_AES,
+                        Base64.encodeToString(it, Base64.NO_WRAP)
+                    ).apply()
+                }
+            }
+            return SecretKeySpec(keyBytes, "AES")
         }
+    }
+
+    internal fun isEncryptedFormat(rawStored: String?): Boolean {
+        return rawStored != null && rawStored.startsWith("GCM:")
     }
 
     private fun encryptString(plainText: String): String {
         return try {
             val secretKey = getOrCreateSecretKey()
-            if (secretKey != null) {
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-                val iv = cipher.iv
-                val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-                val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
-                val dataB64 = Base64.encodeToString(cipherBytes, Base64.NO_WRAP)
-                "GCM:$ivB64:$dataB64"
-            } else {
-                "B64:" + Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-            }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+            val iv = cipher.iv
+            val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+            val ivB64 = Base64.encodeToString(iv, Base64.NO_WRAP)
+            val dataB64 = Base64.encodeToString(cipherBytes, Base64.NO_WRAP)
+            "GCM:$ivB64:$dataB64"
         } catch (_: Exception) {
-            "B64:" + Base64.encodeToString(plainText.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            ""
         }
     }
 
     private fun decryptString(stored: String): String {
         return try {
-            when {
-                stored.startsWith("GCM:") -> {
-                    val parts = stored.split(":", limit = 3)
-                    if (parts.size < 3) return ""
-                    val iv = Base64.decode(parts[1], Base64.NO_WRAP)
-                    val cipherBytes = Base64.decode(parts[2], Base64.NO_WRAP)
-                    val secretKey = getOrCreateSecretKey() ?: return ""
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
-                    String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
-                }
-                stored.startsWith("B64:") -> {
-                    val b64 = stored.removePrefix("B64:")
-                    String(Base64.decode(b64, Base64.NO_WRAP), Charsets.UTF_8)
-                }
-                else -> stored
-            }
+            if (!stored.startsWith("GCM:")) return ""
+            val parts = stored.split(":", limit = 3)
+            if (parts.size < 3) return ""
+            val iv = Base64.decode(parts[1], Base64.NO_WRAP)
+            val cipherBytes = Base64.decode(parts[2], Base64.NO_WRAP)
+            val secretKey = getOrCreateSecretKey()
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+            String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
         } catch (_: Exception) {
             ""
         }
@@ -343,7 +406,9 @@ class SuaPreferences(context: Context) {
     }
 
     fun getCustomCommands(): List<CustomVoiceCommand> {
-        val raw = prefs.getString(KEY_CUSTOM_COMMANDS, null) ?: return emptyList()
+        val enc = prefs.getString(KEY_CUSTOM_COMMANDS_ENC, null) ?: return emptyList()
+        val raw = decryptString(enc)
+        if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
             val list = mutableListOf<CustomVoiceCommand>()
@@ -355,8 +420,8 @@ class SuaPreferences(context: Context) {
                     list.add(
                         CustomVoiceCommand(
                             id = obj.optLong("id", System.currentTimeMillis() + i),
-                            triggerPhrase = trig,
-                            spokenResponse = resp
+                            triggerPhrase = trig.take(MAX_LOG_TEXT_LENGTH),
+                            spokenResponse = resp.take(MAX_LOG_TEXT_LENGTH)
                         )
                     )
                 }
@@ -369,21 +434,20 @@ class SuaPreferences(context: Context) {
 
     fun saveCustomCommands(commands: List<CustomVoiceCommand>) {
         val arr = JSONArray()
-        commands.take(50).forEach { cmd ->
+        commands.take(MAX_COMMAND_LOGS).forEach { cmd ->
             val obj = JSONObject()
             obj.put("id", cmd.id)
-            obj.put("triggerPhrase", cmd.triggerPhrase)
-            obj.put("spokenResponse", cmd.spokenResponse)
+            obj.put("triggerPhrase", cmd.triggerPhrase.take(MAX_LOG_TEXT_LENGTH))
+            obj.put("spokenResponse", cmd.spokenResponse.take(MAX_LOG_TEXT_LENGTH))
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_CUSTOM_COMMANDS, arr.toString()).apply()
+        prefs.edit().putString(KEY_CUSTOM_COMMANDS_ENC, encryptString(arr.toString())).apply()
     }
 
     fun getQuickContacts(): List<QuickContact> {
-        val raw = prefs.getString(KEY_QUICK_CONTACTS, null)
-        if (raw.isNullOrBlank()) {
-            return emptyList()
-        }
+        val enc = prefs.getString(KEY_QUICK_CONTACTS_ENC, null) ?: return emptyList()
+        val raw = decryptString(enc)
+        if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
             val list = mutableListOf<QuickContact>()
@@ -394,9 +458,9 @@ class SuaPreferences(context: Context) {
                 if (name.isNotEmpty() && num.isNotEmpty()) {
                     list.add(
                         QuickContact(
-                            name = name,
-                            aliasTag = obj.optString("aliasTag", "SPEED DIAL"),
-                            phoneNumber = num
+                            name = name.take(80),
+                            aliasTag = obj.optString("aliasTag", "SPEED DIAL").take(80),
+                            phoneNumber = num.take(30)
                         )
                     )
                 }
@@ -409,38 +473,41 @@ class SuaPreferences(context: Context) {
 
     fun saveQuickContacts(contacts: List<QuickContact>) {
         val arr = JSONArray()
-        contacts.forEach { c ->
+        contacts.take(MAX_COMMAND_LOGS).forEach { c ->
             val obj = JSONObject()
-            obj.put("name", c.name)
-            obj.put("aliasTag", c.aliasTag)
-            obj.put("phoneNumber", c.phoneNumber)
+            obj.put("name", c.name.take(80))
+            obj.put("aliasTag", c.aliasTag.take(80))
+            obj.put("phoneNumber", c.phoneNumber.take(30))
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_QUICK_CONTACTS, arr.toString()).apply()
+        prefs.edit().putString(KEY_QUICK_CONTACTS_ENC, encryptString(arr.toString())).apply()
     }
 
     fun saveCommandLogs(logs: List<CommandLogEntry>) {
         val arr = JSONArray()
-        logs.take(60).forEach { entry ->
+        logs.take(MAX_COMMAND_LOGS).forEach { entry ->
             val obj = JSONObject()
             obj.put("id", entry.id)
-            obj.put("timestamp", entry.timestamp)
-            obj.put("userCommand", entry.userCommand)
-            obj.put("suaResponse", entry.suaResponse)
+            obj.put("timestamp", entry.timestamp.take(40))
+            obj.put("userCommand", entry.userCommand.take(MAX_LOG_TEXT_LENGTH))
+            obj.put("suaResponse", entry.suaResponse.take(MAX_LOG_TEXT_LENGTH))
             obj.put("actionType", entry.actionType.name)
             obj.put("actionSuccess", entry.actionSuccess)
             obj.put("isPinnedToMemory", entry.isPinnedToMemory)
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_COMMAND_LOGS, arr.toString()).apply()
+        prefs.edit().putString(KEY_COMMAND_LOGS_ENC, encryptString(arr.toString())).apply()
     }
 
     fun loadCommandLogs(): List<CommandLogEntry> {
-        val raw = prefs.getString(KEY_COMMAND_LOGS, null) ?: return emptyList()
+        val enc = prefs.getString(KEY_COMMAND_LOGS_ENC, null) ?: return emptyList()
+        val raw = decryptString(enc)
+        if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
             val list = mutableListOf<CommandLogEntry>()
-            for (i in 0 until arr.length()) {
+            val count = arr.length().coerceAtMost(MAX_COMMAND_LOGS)
+            for (i in 0 until count) {
                 val obj = arr.getJSONObject(i)
                 val actionName = obj.optString("actionType", DeviceActionType.AI_CHAT.name)
                 val actionType = try {
@@ -451,9 +518,9 @@ class SuaPreferences(context: Context) {
                 list.add(
                     CommandLogEntry(
                         id = obj.optLong("id", System.currentTimeMillis() + i),
-                        timestamp = obj.optString("timestamp", ""),
-                        userCommand = obj.optString("userCommand", ""),
-                        suaResponse = obj.optString("suaResponse", ""),
+                        timestamp = obj.optString("timestamp", "").take(40),
+                        userCommand = obj.optString("userCommand", "").take(MAX_LOG_TEXT_LENGTH),
+                        suaResponse = obj.optString("suaResponse", "").take(MAX_LOG_TEXT_LENGTH),
                         actionType = actionType,
                         actionSuccess = obj.optBoolean("actionSuccess", true),
                         isPinnedToMemory = obj.optBoolean("isPinnedToMemory", false)
@@ -468,31 +535,34 @@ class SuaPreferences(context: Context) {
 
     fun saveMemoryItems(memories: List<MokoMemoryItem>) {
         val arr = JSONArray()
-        memories.take(60).forEach { item ->
+        memories.take(MAX_MEMORY_ITEMS).forEach { item ->
             val obj = JSONObject()
             obj.put("id", item.id)
-            obj.put("factText", item.factText)
-            obj.put("timestamp", item.timestamp)
+            obj.put("factText", item.factText.take(MAX_LOG_TEXT_LENGTH))
+            obj.put("timestamp", item.timestamp.take(40))
             obj.put("isAutoExtracted", item.isAutoExtracted)
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_MOKO_MEMORIES, arr.toString()).apply()
+        prefs.edit().putString(KEY_MOKO_MEMORIES_ENC, encryptString(arr.toString())).apply()
     }
 
     fun loadMemoryItems(): List<MokoMemoryItem> {
-        val raw = prefs.getString(KEY_MOKO_MEMORIES, null) ?: return emptyList()
+        val enc = prefs.getString(KEY_MOKO_MEMORIES_ENC, null) ?: return emptyList()
+        val raw = decryptString(enc)
+        if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONArray(raw)
             val list = mutableListOf<MokoMemoryItem>()
-            for (i in 0 until arr.length()) {
+            val count = arr.length().coerceAtMost(MAX_MEMORY_ITEMS)
+            for (i in 0 until count) {
                 val obj = arr.getJSONObject(i)
-                val fact = obj.optString("factText", "").trim()
+                val fact = obj.optString("factText", "").trim().take(MAX_LOG_TEXT_LENGTH)
                 if (fact.isNotEmpty()) {
                     list.add(
                         MokoMemoryItem(
                             id = obj.optLong("id", System.currentTimeMillis() + i),
                             factText = fact,
-                            timestamp = obj.optString("timestamp", ""),
+                            timestamp = obj.optString("timestamp", "").take(40),
                             isAutoExtracted = obj.optBoolean("isAutoExtracted", true)
                         )
                     )
