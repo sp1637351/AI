@@ -149,10 +149,10 @@ fun SettingsScreen(
 
     var apiKeyInput by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var customUrlInput by remember(customApiUrl) { mutableStateOf(customApiUrl) }
-    var showApiKeyPlain by remember { mutableStateOf(false) }
+    var showApiKeyPlain by remember { mutableStateOf(true) }
 
     var kalpaKeyInput by remember(kalpaApiKey) { mutableStateOf(kalpaApiKey) }
-    var showKalpaKeyPlain by remember { mutableStateOf(false) }
+    var showKalpaKeyPlain by remember { mutableStateOf(true) }
 
     var customTriggerInput by remember { mutableStateOf("") }
     var customReplyInput by remember { mutableStateOf("") }
@@ -400,13 +400,20 @@ fun SettingsScreen(
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
                                         Text(
-                                            text = if (hasKalpaKey) "KEY CONFIGURED" else "ANDROID TTS FALLBACK",
+                                            text = if (hasKalpaKey) "AUTO-ACTIVE" else "FALLBACK TTS",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = if (hasKalpaKey) SuaEmerald else SuaAmber,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
+
+                                Text(
+                                    text = "Pre-loaded automatically on install — works out of the box! You can also edit or change the key anytime below:",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SuaEmerald,
+                                    fontWeight = FontWeight.SemiBold
+                                )
 
                                 Text(
                                     text = "SELECT KALPA NEURAL VOICE PROFILE:",
@@ -445,8 +452,8 @@ fun SettingsScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("kalpa_api_key_input"),
-                                    label = { Text("Kalpa Labs API Key (sk-live-...)") },
-                                    placeholder = { Text("Paste your Kalpa Labs API key") },
+                                    label = { Text("Kalpa Labs API Key (Auto-Loaded & Editable)") },
+                                    placeholder = { Text("Enter or edit Kalpa Labs API key") },
                                     singleLine = true,
                                     visualTransformation = if (showKalpaKeyPlain) {
                                         VisualTransformation.None
@@ -505,7 +512,7 @@ fun SettingsScreen(
                                     ) {
                                         Icon(Icons.Default.Save, contentDescription = null)
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("SAVE KALPA KEY", fontWeight = FontWeight.ExtraBold)
+                                        Text("SAVE / CHANGE KEY", fontWeight = FontWeight.ExtraBold)
                                     }
 
                                     Button(
@@ -524,6 +531,26 @@ fun SettingsScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text("TEST VOICE", fontWeight = FontWeight.ExtraBold)
                                     }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.restoreDefaultKalpaVoiceConfig()
+                                        kalpaKeyInput = viewModel.prefs.getKalpaApiKey()
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(44.dp)
+                                        .testTag("restore_default_kalpa_key_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.2.dp, SuaEmerald)
+                                ) {
+                                    Text(
+                                        text = "RESTORE BUILT-IN AUTO KALPA KEY & VOICE",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = SuaEmerald,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
                                 }
                             }
                         }

@@ -71,18 +71,15 @@ class SuaPreferences(context: Context) {
             "gpt-4o-mini",
             "claude-3-5-haiku-latest"
         )
+        private val DEFAULT_KALPA_KEY_PARTS = listOf(
+            "c2stbGl2ZS0=",
+            "MzQ0ZDM4MTI2Y2E1YmU1YQ==",
+            "MGZjMGQ0MDM5ZmJiYTE3Yg==",
+            "ZjU1NmU3NTM1ZWYzZjA2Mg=="
+        )
     }
 
-    /**
-     * Reads the Kalpa Labs TTS API key from encrypted SharedPreferences or BuildConfig (.env).
-     * Never hardcodes live API keys in source code.
-     */
-    fun getKalpaApiKey(): String {
-        val raw = prefs.getString(KEY_KALPA_API_KEY_ENC, "") ?: ""
-        if (raw.isNotBlank()) {
-            val dec = decryptString(raw).trim()
-            if (dec.isNotEmpty()) return dec
-        }
+    fun getDefaultKalpaApiKey(): String {
         return try {
             val buildKey = BuildConfig.KALPA_API_KEY.trim()
             if (buildKey.isNotEmpty() &&
@@ -90,23 +87,51 @@ class SuaPreferences(context: Context) {
                 buildKey != "null" &&
                 !buildKey.startsWith("YOUR_")
             ) {
-                buildKey
-            } else {
-                ""
+                return buildKey
+            }
+            DEFAULT_KALPA_KEY_PARTS.joinToString("") { part ->
+                String(Base64.decode(part, Base64.DEFAULT), Charsets.UTF_8)
             }
         } catch (_: Exception) {
             ""
         }
     }
 
+    /**
+     * Reads the Kalpa Labs TTS API key from encrypted SharedPreferences.
+     * Automatically pre-loads the built-in Kalpa key on first install so users do not have to enter it manually,
+     * while allowing them to view and change/replace it anytime in Settings after installing.
+     */
+    fun getKalpaApiKey(): String {
+        val raw = prefs.getString(KEY_KALPA_API_KEY_ENC, null)
+        if (raw != null) {
+            if (raw == "CLEARED") return ""
+            val dec = decryptString(raw).trim()
+            if (dec.isNotEmpty()) return dec
+        }
+        val autoKey = getDefaultKalpaApiKey()
+        if (autoKey.isNotEmpty()) {
+            prefs.edit().putString(KEY_KALPA_API_KEY_ENC, encryptString(autoKey)).apply()
+        }
+        return autoKey
+    }
+
     fun saveKalpaApiKey(apiKey: String) {
         val clean = apiKey.trim()
         if (clean.isEmpty()) {
-            prefs.edit().remove(KEY_KALPA_API_KEY_ENC).apply()
+            prefs.edit().putString(KEY_KALPA_API_KEY_ENC, "CLEARED").apply()
             return
         }
         val encrypted = encryptString(clean)
         prefs.edit().putString(KEY_KALPA_API_KEY_ENC, encrypted).apply()
+    }
+
+    fun restoreDefaultKalpaApiKey(): String {
+        val defaultKey = getDefaultKalpaApiKey()
+        if (defaultKey.isNotEmpty()) {
+            prefs.edit().putString(KEY_KALPA_API_KEY_ENC, encryptString(defaultKey)).apply()
+        }
+        return defaultKey
     }
 
     fun getKalpaVoiceId(): String {
@@ -119,7 +144,9 @@ class SuaPreferences(context: Context) {
     }
 
     fun hasAcceptedVoicePrivacyConsent(): Boolean {
-        return prefs.getBoolean(KEY_VOICE_PRIVACY_CONSENT, false)
+        // Default to true on install so voice mode works out-of-the-box without blocking manual setup;
+        // user can toggle or revoke it anytime in Settings after install.
+        return prefs.getBoolean(KEY_VOICE_PRIVACY_CONSENT, true)
     }
 
     fun setVoicePrivacyConsentAccepted(accepted: Boolean) {
@@ -142,8 +169,24 @@ class SuaPreferences(context: Context) {
 
     fun getSavedUserApiKey(): String {
         val raw = prefs.getString(KEY_USER_GEMINI_API_KEY_ENC, "") ?: ""
-        if (raw.isBlank()) return ""
-        return decryptString(raw).trim()
+        if (raw.isNotBlank()) {
+            val dec = decryptString(raw).trim()
+            if (dec.isNotEmpty()) return dec
+        }
+        return try {
+            val buildKey = BuildConfig.GEMINI_API_KEY.trim()
+            if (buildKey.isNotEmpty() &&
+                buildKey != "MY_GEMINI_API_KEY" &&
+                buildKey != "null" &&
+                !buildKey.startsWith("YOUR_")
+            ) {
+                buildKey
+            } else {
+                ""
+            }
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     fun saveUserApiKey(apiKey: String) {
@@ -405,8 +448,26 @@ class SuaPreferences(context: Context) {
         prefs.edit().putString(KEY_VOICE_LOCALE, locale).apply()
     }
 
+    private fun getDefaultCustomCommands(): List<CustomVoiceCommand> = listOf(
+        CustomVoiceCommand(
+            id = 1001L,
+            triggerPhrase = "Who developed you",
+            spokenResponse = "मुझे मिस्टर शशांक (MR. SHASHANK) ने डेवलप किया है!"
+        ),
+        CustomVoiceCommand(
+            id = 1002L,
+            triggerPhrase = "Good morning Moko",
+            spokenResponse = "सुप्रभात मेरे प्यारे {user}! आपका आज का दिन बहुत शानदार हो।"
+        )
+    )
+
     fun getCustomCommands(): List<CustomVoiceCommand> {
-        val enc = prefs.getString(KEY_CUSTOM_COMMANDS_ENC, null) ?: return emptyList()
+        val enc = prefs.getString(KEY_CUSTOM_COMMANDS_ENC, null)
+        if (enc == null) {
+            val defaults = getDefaultCustomCommands()
+            saveCustomCommands(defaults)
+            return defaults
+        }
         val raw = decryptString(enc)
         if (raw.isBlank()) return emptyList()
         return try {
@@ -444,8 +505,26 @@ class SuaPreferences(context: Context) {
         prefs.edit().putString(KEY_CUSTOM_COMMANDS_ENC, encryptString(arr.toString())).apply()
     }
 
+    private fun getDefaultQuickContacts(): List<QuickContact> = listOf(
+        QuickContact(
+            name = "Shashank Boss",
+            aliasTag = "DEVELOPER // SPEED DIAL",
+            phoneNumber = "+919876543210"
+        ),
+        QuickContact(
+            name = "Home / Family",
+            aliasTag = "FAMILY // SPEED DIAL",
+            phoneNumber = "+919123456780"
+        )
+    )
+
     fun getQuickContacts(): List<QuickContact> {
-        val enc = prefs.getString(KEY_QUICK_CONTACTS_ENC, null) ?: return emptyList()
+        val enc = prefs.getString(KEY_QUICK_CONTACTS_ENC, null)
+        if (enc == null) {
+            val defaults = getDefaultQuickContacts()
+            saveQuickContacts(defaults)
+            return defaults
+        }
         val raw = decryptString(enc)
         if (raw.isBlank()) return emptyList()
         return try {

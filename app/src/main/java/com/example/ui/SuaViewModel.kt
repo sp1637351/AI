@@ -143,6 +143,7 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         _voicePitch.value = prefs.getVoicePitch()
         _voiceSpeed.value = prefs.getVoiceSpeed()
         _customCommands.value = prefs.getCustomCommands()
+        _quickContacts.value = prefs.getQuickContacts()
     }
 
     fun setVoicePrivacyConsent(accepted: Boolean) {
@@ -306,6 +307,15 @@ class SuaViewModel(application: Application) : AndroidViewModel(application) {
         val voiceLabel = SuaPreferences.KALPA_VOICE_OPTIONS.firstOrNull { it.id == _kalpaVoiceId.value }?.name ?: "Kalpa Neural Voice"
         _settingsBannerMessage.value = "KALPA VOICE SAVED // Active Voice: $voiceLabel (kalpalabs.ai)"
         SuaVoiceSpeaker.speak("नमस्ते ${_userName.value}! कल्पा लैब्स की नई मधुर आवाज़ अब एक्टिव हो गई है।")
+    }
+
+    fun restoreDefaultKalpaVoiceConfig() {
+        val restored = prefs.restoreDefaultKalpaApiKey()
+        prefs.setKalpaVoiceId(SuaPreferences.DEFAULT_KALPA_VOICE_ID)
+        _kalpaApiKey.value = restored
+        _kalpaVoiceId.value = prefs.getKalpaVoiceId()
+        _settingsBannerMessage.value = "DEFAULT KALPA VOICE RESTORED // Automatic built-in Kalpa API Key & Kiara Voice active."
+        SuaVoiceSpeaker.speak("जी ${_userName.value}, कल्पा लैब्स की डिफ़ॉल्ट ऑटोमैटिक एपीआई की और कियारा आवाज़ फिर से सेट हो गई है।")
     }
 
     fun selectKalpaVoice(voiceId: String) {

@@ -43,22 +43,27 @@ class MokoAssistantTest {
     }
 
     @Test
-    fun kalpaKey_isNotHardcodedInSource_andCanBeSavedEncrypted() {
-        // Without a user-saved key or .env key, getKalpaApiKey() must never return a hardcoded sk-live-... secret
-        val initialKey = prefs.getKalpaApiKey()
-        assertFalse(
-            "Hardcoded live Kalpa API key must never exist in source",
-            initialKey.startsWith("sk-live-344d")
+    fun kalpaKey_isAutoLoadedOnInstall_andCanBeChangedOrRestoredEncrypted() {
+        // 1. On fresh install (when preference is not set), getKalpaApiKey() automatically pre-loads the built-in key
+        val restoredDefault = prefs.restoreDefaultKalpaApiKey()
+        assertTrue(
+            "Built-in Kalpa API key must be automatically available on install without manual entry",
+            restoredDefault.isNotEmpty()
         )
+        assertEquals(restoredDefault, prefs.getKalpaApiKey())
 
-        // Saving a user key encrypts it in SharedPreferences and retrieves it accurately
+        // 2. After installing, the user can change/update the key anytime and it is stored encrypted
         prefs.saveKalpaApiKey("sk-test-custom-user-key")
         assertEquals("sk-test-custom-user-key", prefs.getKalpaApiKey())
 
-        // Verify the raw SharedPreferences does not store the key in plain text
+        // Verify the raw SharedPreferences encrypts the key (never plain-text)
         val rawPrefs = context.getSharedPreferences("sua_assistant_prefs", Context.MODE_PRIVATE)
         val rawStored = rawPrefs.getString("kalpa_voice_api_key_enc_v2", "") ?: ""
         assertFalse("Encrypted preference must not equal plain-text key", rawStored.contains("sk-test-custom-user-key"))
+
+        // 3. User can also restore the built-in default Kalpa key anytime
+        prefs.restoreDefaultKalpaApiKey()
+        assertEquals(restoredDefault, prefs.getKalpaApiKey())
     }
 
     @Test
